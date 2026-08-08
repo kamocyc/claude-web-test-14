@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>水都 — 治水シミュレーション</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🌊</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="view"></canvas>
+
+      <header id="topbar">
+        <div class="chip" id="chip-date">
+          <span class="chip-label">日時</span>
+          <span class="chip-value" id="v-date">--</span>
+        </div>
+        <div class="chip" id="chip-weather">
+          <span class="chip-label">天気</span>
+          <span class="chip-value" id="v-weather">--</span>
+        </div>
+        <div class="chip" id="chip-inflow">
+          <span class="chip-label">流入量</span>
+          <span class="chip-value" id="v-inflow">--</span>
+        </div>
+        <div class="chip" id="chip-money">
+          <span class="chip-label">資金</span>
+          <span class="chip-value" id="v-money">--</span>
+        </div>
+        <div class="chip" id="chip-pop">
+          <span class="chip-label">人口</span>
+          <span class="chip-value" id="v-pop">--</span>
+        </div>
+        <div class="chip" id="chip-water">
+          <span class="chip-label">給水率</span>
+          <span class="chip-value" id="v-water">--</span>
+        </div>
+        <div class="chip" id="chip-food">
+          <span class="chip-label">食料</span>
+          <span class="chip-value" id="v-food">--</span>
+        </div>
+        <div class="chip warn" id="chip-flood">
+          <span class="chip-label">浸水</span>
+          <span class="chip-value" id="v-flood">--</span>
+        </div>
+      </header>
+
+      <aside id="toolbar">
+        <div class="tool-header">
+          <h1>水都</h1>
+          <p>治水・利水シミュレーター</p>
+        </div>
+        <div id="tool-groups"></div>
+        <div class="tool-footer">
+          <button class="ghost" id="btn-predischarge" title="全ダムのゲートを全開にして貯水容量を空ける">事前放流</button>
+          <button class="ghost" id="btn-closegates" title="全ダムのゲートを閉じて貯める">ダム貯留</button>
+          <button class="ghost" id="btn-help">遊び方</button>
+        </div>
+      </aside>
+
+      <aside id="inspector" class="hidden">
+        <button class="close" id="insp-close">×</button>
+        <h2 id="insp-title">--</h2>
+        <div id="insp-body"></div>
+      </aside>
+
+      <div id="events"></div>
+
+      <div id="minimap-wrap">
+        <canvas id="minimap" width="150" height="150"></canvas>
+      </div>
+
+      <footer id="bottombar">
+        <div class="speed">
+          <button data-speed="0" title="一時停止 (Space)">Ⅱ</button>
+          <button data-speed="1" class="active" title="標準速度">▶</button>
+          <button data-speed="2" title="早送り">▶▶</button>
+          <button data-speed="3" title="最速">▶▶▶</button>
+        </div>
+        <div class="overlays">
+          <span class="section-label">表示</span>
+          <button data-overlay="none" class="active">通常</button>
+          <button data-overlay="moisture">湿潤 (M)</button>
+          <button data-overlay="hazard">浸水履歴 (H)</button>
+          <button data-overlay="elevation">標高 (E)</button>
+          <button data-overlay="network">水道網 (N)</button>
+          <button id="btn-flow" class="active">流線 (F)</button>
+          <button id="btn-grid">格子 (G)</button>
+        </div>
+        <div id="forecast"></div>
+      </footer>
+
+      <div id="tooltip" class="hidden"></div>
+
+      <div id="loading">
+        <div class="spinner"></div>
+        <div id="loading-text">流域を生成しています…</div>
+      </div>
+
+      <div id="help" class="hidden">
+        <div class="help-panel">
+          <button class="close" id="help-close">×</button>
+          <h2>遊び方</h2>
+          <section>
+            <h3>この世界のしくみ</h3>
+            <ul>
+              <li>地形は<b>水力侵食</b>で削られた実際の流域のように生成され、雨は必ず低い方へ流れて海へ抜けます。</li>
+              <li>水は<b>浅水方程式 (仮想パイプ法)</b> で1セルずつやり取りされます。堰き止めれば必ずどこかに溜まります。</li>
+              <li>川や水路の水面から<b>最大11セル</b>まで土が潤います。ただし水面より <b>2.6m</b> 以上高い土地には登れません。段丘の上を潤すには水路を掘るか、水門で水位を上げます。</li>
+              <li>上流の流域はマップ外に広がっており、雨が降ると数時間〜数日遅れて<b>流入量</b>が増えます。予報を見て先に備えましょう。</li>
+            </ul>
+          </section>
+          <section>
+            <h3>操作</h3>
+            <ul>
+              <li>左ドラッグ: 選択中のツールを適用 / 右ドラッグ・中ドラッグ: 地図を移動</li>
+              <li>ホイール: ズーム / Space: 一時停止 / 1・2・3: 速度</li>
+              <li>Q: 調査モード、M/H/E/N: 表示切替、F: 流線、G: 格子</li>
+            </ul>
+          </section>
+          <section>
+            <h3>まず何をする？</h3>
+            <ol>
+              <li>川沿いに<b>取水施設</b>、その隣に<b>浄水場</b>と<b>配水池</b>を置く。</li>
+              <li><b>水道管</b>でつなぎ、その先に<b>住宅</b>を建てる (つながっていないと給水されません)。</li>
+              <li>川沿いの低地に<b>水田</b>や<b>畑</b>。湿潤オーバーレイ (M) で潤っている範囲を確認。</li>
+              <li>梅雨・台風の前に<b>堤防</b>を築き、<b>ダム</b>で洪水調節。越流すると堤防は決壊します。</li>
+            </ol>
+          </section>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
