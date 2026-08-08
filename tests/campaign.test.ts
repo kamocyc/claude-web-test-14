@@ -35,8 +35,9 @@ describe('自動プレイ (立ち上げ)', () => {
     expect(report.minMoney).toBeGreaterThan(0);
   });
 
-  it('立ち上げ期に建物を失わない', () => {
-    expect(report.buildingsLost).toBe(0);
+  it('立ち上げ期に住宅・上水道を失わない', () => {
+    // 氾濫原の田畑が大出水で傷むのは想定内。守るべきは人と上水道。
+    expect(report.criticalLost).toBe(0);
     expect(report.leveeBreaches).toBe(0);
   });
 

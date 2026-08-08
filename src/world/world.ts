@@ -41,6 +41,8 @@ export class World {
   readonly floodMax: Float32Array;
   /** 平常時に水があるセル。「氾濫面積」を平常時との差で測るための基準 */
   readonly baselineWet: Uint8Array;
+  /** そのセルが連続して水を被っているゲーム時間 (貯水池を平常水域とみなすため) */
+  readonly wetHours: Float32Array;
 
   readonly flowAcc: Float32Array;
   readonly riverMask: Uint8Array;
@@ -73,6 +75,7 @@ export class World {
     this.moisture = new Float32Array(n);
     this.floodMax = new Float32Array(n);
     this.baselineWet = new Uint8Array(n);
+    this.wetHours = new Float32Array(n);
     this.flowAcc = terrain.flowAcc;
     this.riverMask = terrain.riverMask;
     this.structure = new Int32Array(n).fill(-1);

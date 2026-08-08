@@ -127,6 +127,39 @@ describe('同梱のサンプルセーブ', () => {
     expect(data.weather.day).toBeGreaterThan(90);
   });
 
+  it('ダムが町の上流の本流に、隙間なく架かっている', () => {
+    const sim = new Simulation(data.seed);
+    applySave(sim, data);
+    const w = sim.world;
+    const dams = [...w.buildings.values()].filter((b) => b.kind === 'dam');
+    const intake = [...w.buildings.values()].find((b) => b.kind === 'intake');
+    expect(dams.length).toBeGreaterThan(4);
+    expect(intake).toBeDefined();
+    if (!intake) return;
+
+    // (1) 堤体が一列に、隙間なく並んでいること。
+    //     途中で資金が尽きて径間が欠けると、そこから水が抜けて堰にならない。
+    const row = dams[0].y;
+    expect(dams.every((d) => d.y === row)).toBe(true);
+    const xs = dams.map((d) => d.x).sort((a, b) => a - b);
+    expect(xs[xs.length - 1] - xs[0] + 1).toBe(dams.length);
+
+    // (2) 町が取水している本流の上流にあること。
+    //     別水系に架けると洪水調節にまったく効かない。
+    let intakeAcc = 0;
+    for (const j of w.cellsInRadius(intake.x, intake.y, 6)) {
+      intakeAcc = Math.max(intakeAcc, w.flowAcc[j]);
+    }
+    const damAcc = Math.max(...dams.map((d) => w.flowAcc[w.idx(d.x, d.y)]));
+    expect(damAcc / intakeAcc).toBeGreaterThan(0.5);
+
+    // (3) 実際に水を貯めていること
+    const center = dams.reduce((a, b) =>
+      w.flowAcc[w.idx(b.x, b.y)] > w.flowAcc[w.idx(a.x, a.y)] ? b : a,
+    );
+    expect(w.water[w.idx(center.x, Math.max(0, center.y - 2))]).toBeGreaterThan(0.5);
+  }, 180000);
+
   it('実際に読み込めて、人口と給水が生きている', () => {
     // サンプルは製品品質の地形で作られているので、同じ条件で読み込む
     const sim = new Simulation(data.seed);

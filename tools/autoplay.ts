@@ -82,6 +82,9 @@ interface Site {
 /* 立地の選定                                                          */
 /* ------------------------------------------------------------------ */
 
+/** 町を構える川に求める最低流域面積 (セル) */
+const MIN_RIVER_ACC = 1500;
+
 /** 取水でき、周りに平地が広がっていて、浸水しにくい町の起点を探す */
 function pickTownSite(sim: Simulation): Site | null {
   const w = sim.world;
@@ -94,6 +97,13 @@ function pickTownSite(sim: Simulation): Site | null {
       const i = w.idx(x, y);
       if (w.height[i] < 2) continue; // 河口の低湿地は避ける
 
+      // 近くを流れているのが本流かどうか (流域面積で見る)。
+      // ここを見ないと、水はあるが集水域のない小さな枝沢に町を作ってしまい、
+      // 上流にダムを架けても貯める水が無い、ということが起きる。
+      let acc = 0;
+      for (const j of w.cellsInRadius(x, y, 3)) acc = Math.max(acc, w.flowAcc[j]);
+      if (acc < MIN_RIVER_ACC) continue;
+
       // 周囲に住宅を建てられる平地がどれだけあるか
       let flat = 0;
       for (const j of w.cellsInRadius(x, y, 7)) {
@@ -104,7 +114,7 @@ function pickTownSite(sim: Simulation): Site | null {
       if (flat < 40) continue;
 
       const depth = w.maxWaterNear(x, y, 3);
-      const score = flat + depth * 25 + w.height[i] * 0.5;
+      const score = flat + depth * 25 + w.height[i] * 0.5 + Math.log(acc) * 22;
       if (score > bestScore) {
         bestScore = score;
         best = { x, y, dx: 0, dy: 0 };
@@ -258,9 +268,19 @@ function buildWaterworks(sim: Simulation, site: Site, reserve: number): boolean 
 }
 
 /** 水道網の縁に住宅を足す */
-function addHouses(sim: Simulation, count: number, baseHeight: number, reserve: number): number {
+function addHouses(
+  sim: Simulation,
+  count: number,
+  baseHeight: number,
+  reserve: number,
+  reserved: Uint8Array | null,
+): number {
   const w = sim.world;
-  const cand = networkFrontier(w, 'house', (x, y) => isSafeGround(w, x, y, baseHeight));
+  const cand = networkFrontier(
+    w,
+    'house',
+    (x, y) => isSafeGround(w, x, y, baseHeight) && !reserved?.[w.idx(x, y)],
+  );
   // 高い (＝安全な) 土地から埋めていく
   cand.sort((a, b) => w.height[w.idx(b.x, b.y)] - w.height[w.idx(a.x, a.y)]);
   let built = 0;
@@ -273,9 +293,19 @@ function addHouses(sim: Simulation, count: number, baseHeight: number, reserve: 
 }
 
 /** 水道網を延ばす (住宅を建てる余地を増やす) */
-function extendPipes(sim: Simulation, count: number, baseHeight: number, reserve: number): number {
+function extendPipes(
+  sim: Simulation,
+  count: number,
+  baseHeight: number,
+  reserve: number,
+  reserved: Uint8Array | null,
+): number {
   const w = sim.world;
-  const cand = networkFrontier(w, 'pipe', (x, y) => isSafeGround(w, x, y, baseHeight));
+  const cand = networkFrontier(
+    w,
+    'pipe',
+    (x, y) => isSafeGround(w, x, y, baseHeight) && !reserved?.[w.idx(x, y)],
+  );
   cand.sort((a, b) => w.height[w.idx(b.x, b.y)] - w.height[w.idx(a.x, a.y)]);
   let built = 0;
   for (const c of cand) {
@@ -324,7 +354,13 @@ function expandWaterSupply(sim: Simulation, site: Site, reserve: number): void {
 }
 
 /** 灌漑されている土地に田畑を拓く */
-function addFarms(sim: Simulation, site: Site, count: number, reserve: number): number {
+function addFarms(
+  sim: Simulation,
+  site: Site,
+  count: number,
+  reserve: number,
+  reserved: Uint8Array | null,
+): number {
   const w = sim.world;
   const paddies: { x: number; y: number; m: number }[] = [];
   const fields: { x: number; y: number; m: number }[] = [];
@@ -332,6 +368,7 @@ function addFarms(sim: Simulation, site: Site, count: number, reserve: number): 
   for (const i of w.cellsInRadius(site.x, site.y, 26)) {
     const x = i % w.w;
     const y = (i / w.w) | 0;
+    if (reserved?.[i]) continue; // ダム水没予定地には作らない
     const m = w.moisture[i];
     if (m >= 0.82 && w.canPlace('paddy', x, y).ok) paddies.push({ x, y, m });
     else if (m >= 0.45 && w.canPlace('farm', x, y).ok) fields.push({ x, y, m });
@@ -358,13 +395,20 @@ function addFarms(sim: Simulation, site: Site, count: number, reserve: number): 
  * 町と川の間に堤防を築く。
  * 平常時の水域に接した陸地セルを、町の周囲だけ一列に固める。
  */
-function buildLevees(sim: Simulation, site: Site, radius: number, reserve: number): number {
+function buildLevees(
+  sim: Simulation,
+  site: Site,
+  radius: number,
+  reserve: number,
+  reserved: Uint8Array | null,
+): number {
   const w = sim.world;
   const cand: { x: number; y: number; d: number }[] = [];
 
   for (const i of w.cellsInRadius(site.x, site.y, radius)) {
     if (w.baselineWet[i]) continue;
     if (w.structure[i] >= 0) continue;
+    if (reserved?.[i]) continue; // ダムの堤体位置・水没予定地は空けておく
     const x = i % w.w;
     const y = (i / w.w) | 0;
     // 平常時の水域に接している = 岸
@@ -394,50 +438,188 @@ function buildLevees(sim: Simulation, site: Site, radius: number, reserve: numbe
   return built;
 }
 
-/** 上流の狭窄部にダムを架ける */
-function buildDam(sim: Simulation, site: Site, reserve: number): number {
-  const w = sim.world;
-  if (!afford(sim, 'dam', reserve + 4000)) return 0;
+/** ダムを架け切るのに必要な総工費 */
+export function damCost(spot: DamSite): number {
+  return spot.span * BUILDINGS.dam.cost;
+}
 
-  // 町より上流 (北) で、流量が大きく、両岸が立ち上がっている場所を探す
-  let best: { x: number; y: number; width: number; acc: number } | null = null;
-  for (let y = Math.max(6, site.y - 70); y < site.y - 12; y++) {
-    for (let x = 6; x < w.w - 6; x++) {
-      const i = w.idx(x, y);
-      if (!w.baselineWet[i]) continue;
-      if (w.flowAcc[i] < 900) continue; // 本流だけ
+/** ダム地点の評価結果 */
+export interface DamSite {
+  x: number;
+  y: number;
+  /** 必要な径間数 */
+  span: number;
+  /** 両岸が立ち上がる高さ = 貯められる水深の目安 (m) */
+  abutment: number;
+  /** 支配流域面積 (セル) */
+  acc: number;
+}
 
-      // 東西方向の川幅を測る
-      let width = 1;
-      for (let d = 1; d <= 8; d++) {
-        if (w.baselineWet[w.idx(Math.min(w.w - 1, x + d), y)]) width++;
-        else break;
-      }
-      for (let d = 1; d <= 8; d++) {
-        if (w.baselineWet[w.idx(Math.max(0, x - d), y)]) width++;
-        else break;
-      }
-      if (width > 5) continue; // 広すぎる場所は堰き止められない
+/** 1基のダムに許す最大径間数 */
+export const DAM_MAX_SPAN = 24;
 
-      if (!best || w.flowAcc[i] > best.acc) best = { x, y, width, acc: w.flowAcc[i] };
+/**
+ * その地点に、指定した取り付け高さで堰を架けるのに必要な径間数。
+ * 谷が広すぎて端部が見つからなければ -1。
+ */
+function damSpanLength(w: World, x: number, y: number, abutment: number, limit = 60): number {
+  const riverLevel = w.height[w.idx(x, y)];
+  const top = riverLevel + abutment;
+  let span = 1;
+  for (const dir of [-1, 1]) {
+    let d = 1;
+    for (; d < limit; d++) {
+      const nx = x + dir * d;
+      if (!w.inBounds(nx, y)) return -1;
+      if (w.height[w.idx(nx, y)] > top) break;
+      span++;
+    }
+    if (d >= limit) return -1;
+  }
+  return span;
+}
+
+/**
+ * 町の取水口から本流を遡り、堰を架けるのに適した狭窄部を探す。
+ *
+ * 「上流で流量が大きいところ」を探すだけでは、町とは別の水系にダムを架けて
+ * しまい、洪水調節にまったく効かない。必ず自分の川を遡って選ぶ。
+ *
+ * 取り付け高さは固定せず、深く貯められること・堰が短いこと・支配流域が
+ * 広いことのバランス (acc × 取り付け高さ ÷ 径間数) で評価する。
+ * この流域は峡谷ではなく開けた谷なので、高い取り付け部を要求すると
+ * どこにも架けられなくなる。
+ */
+export function findDamSite(w: World, from: { x: number; y: number }): DamSite | null {
+  // --- 1. 取水口の近くで本流 (flowAcc 最大) のセルに乗る ---
+  let cx = from.x;
+  let cy = from.y;
+  let seedAcc = -1;
+  for (const i of w.cellsInRadius(from.x, from.y, 6)) {
+    if (w.flowAcc[i] > seedAcc) {
+      seedAcc = w.flowAcc[i];
+      cx = i % w.w;
+      cy = (i / w.w) | 0;
     }
   }
-  if (!best) return 0;
+  // 本流の 1/5 未満まで細った地点には架けない (調節できる水量が小さい)
+  const minAcc = Math.max(400, seedAcc * 0.2);
 
-  // 川を横断して堰を並べる (両岸に取り付け部も)
-  const y = best.y;
-  const riverLevel = w.height[w.idx(best.x, y)];
+  // --- 2. 「より高くて流量の大きい隣接セル」へ進み、本流を遡る ---
+  const path: { x: number; y: number }[] = [];
+  const seen = new Set<number>();
+  for (let step = 0; step < 200; step++) {
+    const i = w.idx(cx, cy);
+    seen.add(i);
+    path.push({ x: cx, y: cy });
+    let best = -1;
+    let bestScore = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (!w.inBounds(nx, ny)) continue;
+        const j = w.idx(nx, ny);
+        if (seen.has(j)) continue;
+        if (w.height[j] <= w.height[i]) continue; // 上流 = 標高が高い方
+        if (w.flowAcc[j] > bestScore) {
+          bestScore = w.flowAcc[j];
+          best = j;
+        }
+      }
+    }
+    if (best < 0) break;
+    cx = best % w.w;
+    cy = (best / w.w) | 0;
+  }
+
+  // --- 3. 町から離れた区間で、貯留効果 ÷ 建設費 が最大の断面を選ぶ ---
+  let site: DamSite | null = null;
+  let bestValue = 0;
+  for (let k = 14; k < path.length; k++) {
+    const p = path[k];
+    const acc = w.flowAcc[w.idx(p.x, p.y)];
+    if (acc < minAcc) continue;
+    for (const abutment of [12, 10, 8, 6, 5]) {
+      const span = damSpanLength(w, p.x, p.y, abutment);
+      if (span <= 0 || span > DAM_MAX_SPAN) continue;
+      const value = (acc * abutment) / span;
+      if (value > bestValue) {
+        bestValue = value;
+        site = { x: p.x, y: p.y, span, abutment, acc };
+      }
+      break; // その地点では最も高く取れる取り付け高さを採用する
+    }
+  }
+  return site;
+}
+
+/**
+ * ダムを架けたときに水没する範囲。
+ * ここに家や田畑を作ってしまうと、ダムを建てた瞬間に自分の町を沈めることになる。
+ * (実際のダム建設で水没予定地に手を入れないのと同じ)
+ */
+export function reservoirFootprint(w: World, spot: DamSite): Uint8Array {
+  const mask = new Uint8Array(w.w * w.h);
+  const top = w.height[w.idx(spot.x, spot.y)] + spot.abutment;
+  const queue: number[] = [];
+
+  for (let dx = -DAM_MAX_SPAN; dx <= DAM_MAX_SPAN; dx++) {
+    const x = spot.x + dx;
+    const y = spot.y - 1;
+    if (!w.inBounds(x, y)) continue;
+    const i = w.idx(x, y);
+    if (w.height[i] <= top && !mask[i]) {
+      mask[i] = 1;
+      queue.push(i);
+    }
+  }
+
+  let filled = 0;
+  while (queue.length > 0 && filled < 6000) {
+    const i = queue.pop() as number;
+    filled++;
+    const x = i % w.w;
+    const y = (i / w.w) | 0;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!w.inBounds(nx, ny)) continue;
+      if (ny > spot.y) continue; // ダムより下流へは広がらない
+      const j = w.idx(nx, ny);
+      if (mask[j] || w.height[j] > top) continue;
+      mask[j] = 1;
+      queue.push(j);
+    }
+  }
+  return mask;
+}
+
+/** 町の上流の狭窄部にダムを架ける */
+function buildDam(sim: Simulation, spot: DamSite | null, reserve: number): number {
+  const w = sim.world;
+  if (!spot) return 0;
+  // 途中で資金が尽きて径間が欠けると、そこから水が抜けて堰として機能しない。
+  // 全径間ぶんの費用を確保できるまで着手しない。
+  if (sim.city.money - damCost(spot) < reserve) return 0;
+
+  const riverLevel = w.height[w.idx(spot.x, spot.y)];
   let built = 0;
-  for (let dir = -1; dir <= 1; dir += 2) {
-    for (let d = dir < 0 ? 0 : 1; d < 14; d++) {
-      const x = best.x + dir * d;
-      if (!w.inBounds(x, y)) break;
-      const i = w.idx(x, y);
-      // 堰の天端 (16m) より高い地形に達したら、そこが取り付け部
-      if (w.height[i] > riverLevel + 14) break;
+  for (const dir of [-1, 1]) {
+    for (let d = dir < 0 ? 0 : 1; d < DAM_MAX_SPAN; d++) {
+      const x = spot.x + dir * d;
+      if (!w.inBounds(x, spot.y)) break;
+      const i = w.idx(x, spot.y);
+      // 取り付け高さまで立ち上がった地形に達したら、そこが端部
+      if (w.height[i] > riverLevel + spot.abutment) break;
       if (w.structure[i] >= 0) continue;
-      if (!afford(sim, 'dam', reserve)) break;
-      if (sim.build('dam', x, y).ok) built++;
+      if (sim.build('dam', x, spot.y).ok) built++;
     }
   }
   return built;
@@ -487,17 +669,22 @@ function operateGates(sim: Simulation): void {
     }
     const freeboard = crest - upstream;
 
+    // 判断の順序が肝心。「出水予測が出ている間はずっと全開」にしてしまうと、
+    // 洪水の最中もゲートが開きっぱなしになり、ダムは何も貯めずに素通しになる。
+    // 실際の操作と同じく、来る前に空け、来たら閉める。
     let target: number;
     if (freeboard < 2.5) {
       // 満水に近い: これ以上貯めると越流して堤体が壊れるので全開にする
       // (実際のダムの「ただし書き操作」にあたる)
       target = 1;
-    } else if (peak > 55) {
-      // 出水が来る: 事前放流して洪水調節容量を空ける
+    } else if (now > 25) {
+      // 出水が来ている & まだ容量がある: 絞り込んでピークをカットする
+      target = 0.06;
+    } else if (peak > 150) {
+      // 貯水池では受けきれない規模の出水が来る: 事前放流で容量を空ける。
+      // 中規模の出水にまで事前放流すると、せっかく貯めた水を先に流してしまい
+      // かえってピークが上がる (実測で確認)
       target = 1;
-    } else if (now > 40) {
-      // 出水中でまだ容量がある: 絞ってピークを下げる
-      target = 0.12;
     } else if (sim.weather.drought || now < 8) {
       // 渇水: 貯めておいた水を細く流して下流の取水を維持する
       target = 0.18;
@@ -524,7 +711,34 @@ export function runCampaign(sim: Simulation, opts: AutoplayOptions): CampaignRep
   log(`町の起点: (${site.x}, ${site.y}) 標高 ${baseHeight.toFixed(1)}m / 拡張方向 (${site.dx},${site.dy})`);
 
   if (!buildWaterworks(sim, site, reserve)) throw new Error('上水道を敷設できませんでした');
-  addHouses(sim, 8, baseHeight, reserve);
+
+  // ダムの適地と水没予定地を先に決めておき、そこには手を付けない
+  const damSpot = findDamSite(w, site);
+  const reserved = damSpot ? reservoirFootprint(w, damSpot) : null;
+  if (damSpot && reserved) {
+    // 堤体を並べる線そのものも予約しておく (堤防に塞がれると架けられない)
+    const riverLevel = w.height[w.idx(damSpot.x, damSpot.y)];
+    for (const dir of [-1, 1]) {
+      for (let d = 0; d < DAM_MAX_SPAN; d++) {
+        const x = damSpot.x + dir * d;
+        if (!w.inBounds(x, damSpot.y)) break;
+        const i = w.idx(x, damSpot.y);
+        if (w.height[i] > riverLevel + damSpot.abutment) break;
+        reserved[i] = 1;
+      }
+    }
+  }
+  if (damSpot) {
+    const cells = reserved ? reserved.reduce((a: number, b: number) => a + b, 0) : 0;
+    log(
+      `ダム適地: (${damSpot.x}, ${damSpot.y}) ${damSpot.span}径間 (￥${damCost(damSpot).toLocaleString('ja-JP')}) / ` +
+        `取り付け高 ${damSpot.abutment}m / 支配流域 ${damSpot.acc.toFixed(0)}セル / 水没予定地 ${cells}セル`,
+    );
+  } else {
+    log('ダムを架けられる狭窄部が見つかりませんでした');
+  }
+
+  addHouses(sim, 8, baseHeight, reserve, reserved);
 
   const history: DayRecord[] = [];
   let minMoney = sim.city.money;
@@ -577,7 +791,7 @@ export function runCampaign(sim: Simulation, opts: AutoplayOptions): CampaignRep
     const needRate = s.city.population * CITY.FOOD_PER_CAPITA * 1.5;
     const haveRate = foodProduction(w);
     if (haveRate < needRate || s.city.food < s.city.population * 0.7 || s.city.foodScore < 0.98) {
-      addFarms(sim, site, 4, reserve);
+      addFarms(sim, site, 4, reserve, reserved);
     }
 
     // 3. 治水 — 町が維持費を賄えるようになったら、拡張を一旦止めて資金を貯め、
@@ -586,11 +800,18 @@ export function runCampaign(sim: Simulation, opts: AutoplayOptions): CampaignRep
     // 治水設備は維持費が重いので、町が十分に稼げるようになってから着手する。
     // 積立額を決め、それを上回った分だけ拡張に回す (積立が貯まらないと
     // いつまでもダムが建たず、かといって拡張を止めると収入が伸びない)
-    const defenseFund =
-      s.city.population < 500 || damBuilt ? 0 : pumpBuilt ? 46000 : leveesBuilt ? 12000 : 16000;
+    // 積立の目標額。ダムは高いので、町が十分に稼げる規模 (人口900) に
+    // なってから貯め始める。小さいうちに貯めようとすると、成長が止まって
+    // 維持費だけがかさみ、いつまでも建たない。
+    let defenseFund = 0;
+    if (!leveesBuilt && s.city.population > 400) defenseFund = 16000;
+    else if (leveesBuilt && !pumpBuilt) defenseFund = 12000;
+    else if (leveesBuilt && pumpBuilt && !damBuilt && damSpot && s.city.population > 900) {
+      defenseFund = damCost(damSpot) + 8000;
+    }
 
     if (!leveesBuilt && s.city.population > 500 && sim.city.money > 16000) {
-      const n = buildLevees(sim, site, 15, 6000);
+      const n = buildLevees(sim, site, 15, 6000, reserved);
       if (n > 0) {
         leveesBuilt = true;
         log(`day ${day}: 堤防を ${n} 区間築いた (人口 ${Math.round(s.city.population)})`);
@@ -601,14 +822,12 @@ export function runCampaign(sim: Simulation, opts: AutoplayOptions): CampaignRep
       if (pumpBuilt) log(`day ${day}: 排水機場を建設`);
     }
     if (leveesBuilt && pumpBuilt && !damBuilt && sim.city.money > 46000) {
-      const n = buildDam(sim, site, 8000);
+      const n = buildDam(sim, damSpot, 8000);
       if (n > 0) {
         damBuilt = true;
         log(`day ${day}: ダムを ${n} 径間で建設 (資金 ￥${Math.round(sim.city.money)})`);
-      } else {
-        // 架けられる狭窄部がなければ諦めて拡張に戻る
-        damBuilt = true;
-        log(`day ${day}: ダムを架けられる地点が見つからなかった`);
+      } else if (day % 20 === 0) {
+        log(`day ${day}: ダムを架けられなかった (堤体位置が塞がれている可能性)`);
       }
     }
 
@@ -617,8 +836,8 @@ export function runCampaign(sim: Simulation, opts: AutoplayOptions): CampaignRep
     const roomy = s.city.population > houses * CITY.HOUSE_CAPACITY * 0.78;
     const healthy = s.city.waterScore > 0.9 && s.city.foodScore > 0.95;
     if (roomy && healthy && houses < maxHouses && sim.city.money > defenseFund + reserve + 1200) {
-      const added = addHouses(sim, 8, baseHeight, reserve);
-      if (added < 6) extendPipes(sim, 8, baseHeight, reserve);
+      const added = addHouses(sim, 8, baseHeight, reserve, reserved);
+      if (added < 6) extendPipes(sim, 8, baseHeight, reserve, reserved);
     }
 
     history.push({

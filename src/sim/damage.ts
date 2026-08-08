@@ -10,6 +10,9 @@ import {
 } from './buildings';
 import type { Hydrology } from './hydrology';
 
+/** これだけの時間ずっと水を湛えていれば、洪水ではなく「水域」とみなす (ゲーム時間) */
+const NEW_WATER_HOURS = 72;
+
 export type EventLevel = 'info' | 'warn' | 'danger' | 'good';
 
 export interface GameEvent {
@@ -167,7 +170,15 @@ export class DamageSystem {
     for (let i = 0; i < water.length; i++) {
       const d = water[i];
       // 平常時の水域と海面下は数えず、「普段は乾いている陸地が浸かった」面積だけを測る
-      if (d > 0.3 && w.baselineWet[i] === 0 && w.height[i] > 1) cells++;
+      if (d > 0.3) {
+        if (w.baselineWet[i] === 0 && w.height[i] > 1) cells++;
+        // ダムで貯めた水のように、長く水を湛えたままの場所は「新しい水域」として
+        // 平常時に繰り入れる (洪水ではないので氾濫面積に数え続けない)
+        w.wetHours[i] += hours;
+        if (w.wetHours[i] > NEW_WATER_HOURS) w.baselineWet[i] = 1;
+      } else {
+        w.wetHours[i] = 0;
+      }
       if (d > maxDepth) maxDepth = d;
       if (d > w.floodMax[i]) w.floodMax[i] = d;
     }
