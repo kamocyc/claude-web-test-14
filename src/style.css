@@ -124,13 +124,13 @@ body {
 }
 
 .tool-header {
-  padding: 10px 12px 8px;
+  padding: 7px 12px 6px;
   border-bottom: 1px solid var(--border);
 }
 
 .tool-header h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   letter-spacing: 0.16em;
   color: var(--accent);
 }
@@ -167,7 +167,7 @@ body {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 4px 8px;
+  padding: 3px 8px;
   margin-bottom: 2px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid transparent;
@@ -212,7 +212,7 @@ body {
 }
 
 .tool-footer {
-  padding: 8px;
+  padding: 6px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
@@ -221,14 +221,14 @@ body {
 
 button.ghost {
   flex: 1;
-  min-width: 62px;
-  padding: 6px 4px;
+  min-width: 58px;
+  padding: 4px 3px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 10px;
   cursor: pointer;
 }
 

@@ -3,6 +3,15 @@ import { hashSeed } from './core/rng';
 import { Camera } from './render/camera';
 import { Renderer, type Overlay } from './render/renderer';
 import { BUILDINGS, type BuildingKind } from './sim/buildings';
+import {
+  SaveError,
+  applySave,
+  loadSave,
+  readLocalStorage,
+  saveToLocalStorage,
+  validate,
+  type SaveData,
+} from './sim/save';
 import { Simulation } from './sim/simulation';
 import { UI } from './ui/ui';
 
@@ -41,6 +50,23 @@ function boot(): void {
     },
     onGate: (b, v) => sim.setGate(b, v),
     onMinimapClick: (fx, fy) => camera.centerOn(fx * sim.world.w, fy * sim.world.h),
+    onSave: () => {
+      try {
+        saveToLocalStorage(sim, `${sim.weather.dateLabel()} の水都`);
+        sim.damage.info('この状態をブラウザに保存しました', sim.weather.day, sim.weather.hour, 'good');
+      } catch {
+        sim.damage.info('保存できませんでした (ブラウザの空き容量が不足)', sim.weather.day, sim.weather.hour, 'warn');
+      }
+    },
+    onLoad: () => {
+      const data = readLocalStorage();
+      if (!data) {
+        sim.damage.info('保存されたデータがありません', sim.weather.day, sim.weather.hour, 'warn');
+        return;
+      }
+      void applySaveData(data, '保存した状態を読み込んでいます…');
+    },
+    onLoadSample: () => void loadSample(),
   });
 
   ui.setLoadingText('流域を生成しています… (侵食計算中)');
@@ -61,13 +87,71 @@ function boot(): void {
     camera.zoom = 5.5;
 
     setupInput();
-    // 開発時のデバッグ用フック (コンソールから世界の状態を覗ける)
-    if (import.meta.env.DEV) {
-      Object.assign(window, { __game: sim, __camera: camera, __ui: ui });
-    }
+    exposeDebugHandles();
     ui.hideLoading();
     requestAnimationFrame(loop);
   }, 60);
+
+  /* ---------------------------------------------------------------- */
+  /* セーブデータの読み込み                                             */
+  /* ---------------------------------------------------------------- */
+
+  /** 開発時のデバッグ用フック (コンソールから世界の状態を覗ける) */
+  function exposeDebugHandles(): void {
+    if (!import.meta.env.DEV) return;
+    Object.assign(window, { __game: sim, __camera: camera, __ui: ui });
+  }
+
+  /** ローディング画面を実際に描画させてから重い処理に入る */
+  function nextPaint(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => setTimeout(resolve, 0));
+    });
+  }
+
+  async function applySaveData(data: SaveData, message: string): Promise<void> {
+    ui.showLoading(message);
+    await nextPaint();
+    try {
+      validate(data);
+      if (data.seed === sim.seed) {
+        // 同じ流域なら地形を作り直す必要はない
+        applySave(sim, data);
+      } else {
+        // 別の流域: 地形から作り直し、描画側も差し替える
+        ui.setLoadingText('流域を生成しています… (侵食計算中)');
+        await nextPaint();
+        sim = loadSave(data);
+        renderer = new Renderer(canvas, sim.world, camera);
+        renderer.resize();
+        camera.centerOn(sim.world.w * 0.5, sim.world.h * 0.6);
+      }
+      ui.reset();
+      ui.setSpeedButtons(sim.speedIndex);
+      exposeDebugHandles();
+      sim.damage.info(`「${data.label}」を読み込みました`, sim.weather.day, sim.weather.hour, 'good');
+    } catch (e) {
+      const msg = e instanceof SaveError ? e.message : 'セーブデータを読み込めませんでした';
+      sim.damage.info(msg, sim.weather.day, sim.weather.hour, 'warn');
+    } finally {
+      ui.hideLoading();
+    }
+  }
+
+  async function loadSample(): Promise<void> {
+    ui.showLoading('サンプルの町を読み込んでいます…');
+    await nextPaint();
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}saves/sample.json`);
+      if (!res.ok) throw new SaveError('サンプルデータが見つかりません');
+      const data = (await res.json()) as SaveData;
+      await applySaveData(data, 'サンプルの町を読み込んでいます…');
+    } catch (e) {
+      ui.hideLoading();
+      const msg = e instanceof SaveError ? e.message : 'サンプルを読み込めませんでした';
+      sim.damage.info(msg, sim.weather.day, sim.weather.hour, 'warn');
+    }
+  }
 
   /* ---------------------------------------------------------------- */
   /* 入力                                                              */

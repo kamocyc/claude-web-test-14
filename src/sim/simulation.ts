@@ -73,16 +73,7 @@ export class Simulation {
     this.moisture.compute();
     this.moisture.apply(24);
 
-    this.snapshot = {
-      city: this.city.update(0, this.network.update(0.0001, 1), 0, 0),
-      net: this.network.stats,
-      damage: this.damage.update(0, 0, 0),
-      inflow: this.weather.inflow,
-      outflow: 0,
-      moistureCells: this.moisture.irrigatedCells(),
-      fields: 0,
-      cropGrowth: 0,
-    };
+    this.snapshot = this.refresh();
     this.damage.info('新しい流域に着任しました。まずは川沿いに取水施設と浄水場を。', 0, 6, 'good');
   }
 
@@ -118,6 +109,31 @@ export class Simulation {
       this.stepHour();
     }
     if (budget <= 0) this.hourAcc = 0;
+  }
+
+  /**
+   * 時間を進めずに集計だけ作り直す。
+   * セーブデータを読み込んだ直後や起動時に、HUD へ正しい値を出すために使う。
+   * (各サブシステムを極小の dt で呼ぶので、状態はほとんど変化しない)
+   */
+  refresh(): SimSnapshot {
+    const dt = 1e-3;
+    const w = this.weather;
+    const net = this.network.update(dt, w.drought ? 0.55 : 1);
+    const harvested = this.agriculture.update(dt, w.tempC);
+    const damage = this.damage.update(dt, w.day, w.hour);
+    const city = this.city.update(dt, net, harvested, damage.hydroRevenue);
+    this.snapshot = {
+      city,
+      net,
+      damage,
+      inflow: w.inflow,
+      outflow: this.outflowPerHour,
+      moistureCells: this.moisture.irrigatedCells(),
+      fields: this.agriculture.stats.fields,
+      cropGrowth: this.agriculture.stats.avgGrowth,
+    };
+    return this.snapshot;
   }
 
   /** 1ゲーム時間ぶんのシミュレーション */

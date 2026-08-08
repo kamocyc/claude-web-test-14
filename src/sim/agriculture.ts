@@ -17,8 +17,8 @@ interface CropSpec {
 }
 
 export const CROPS: Partial<Record<BuildingKind, CropSpec>> = {
-  farm: { need: 0.35, growDays: 12, yieldAmount: 6, floodTolerance: 0.22, witherRate: 0.06, name: '畑作物' },
-  paddy: { need: 0.8, growDays: 18, yieldAmount: 13, floodTolerance: 0.6, witherRate: 0.045, name: '稲' },
+  farm: { need: 0.35, growDays: 12, yieldAmount: 9, floodTolerance: 0.22, witherRate: 0.06, name: '畑作物' },
+  paddy: { need: 0.8, growDays: 18, yieldAmount: 18, floodTolerance: 0.6, witherRate: 0.045, name: '稲' },
 };
 
 export interface AgriStats {

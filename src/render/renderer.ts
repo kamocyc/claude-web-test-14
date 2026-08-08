@@ -193,16 +193,18 @@ export class Renderer {
         const lxp = x < W - 1 ? solid[i + 1] + water[i + 1] : li;
         const lym = y > 0 ? solid[i - W] + water[i - W] : li;
         const lyp = y < H - 1 ? solid[i + W] + water[i + W] : li;
+        // 急斜面では水面の傾き自体が大きくなるので、効かせすぎると
+        // 山地の川が真っ白に飛んでしまう。控えめに。
         const sl = (lxm - lxp + lym - lyp) * 0.5;
-        const spec = clamp(0.5 + sl * 1.4, 0, 1.6);
-        r *= 0.6 + 0.5 * spec;
-        g *= 0.6 + 0.5 * spec;
-        b *= 0.6 + 0.5 * spec;
+        const spec = clamp(0.5 + sl * 0.55, 0, 1.15);
+        r *= 0.76 + 0.3 * spec;
+        g *= 0.76 + 0.3 * spec;
+        b *= 0.76 + 0.3 * spec;
 
         // 流速が速いところは白波
         const sp = Math.hypot(w.vx[i], w.vy[i]);
-        if (sp > 0.9) {
-          const f = clamp((sp - 0.9) / 2.5, 0, 0.75);
+        if (sp > 1.4) {
+          const f = clamp((sp - 1.4) / 3.0, 0, 0.5);
           r += (255 - r) * f;
           g += (255 - g) * f;
           b += (255 - b) * f;

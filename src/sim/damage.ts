@@ -1,7 +1,13 @@
 import { CITY, HYDRO } from '../config';
 import { clamp } from '../core/rng';
 import type { World } from '../world/world';
-import { BUILDINGS, DRAINPUMP_RADIUS, DRAINPUMP_RATE, type Building } from './buildings';
+import {
+  BUILDINGS,
+  DRAINPUMP_RADIUS,
+  DRAINPUMP_RATE,
+  type Building,
+  type BuildingKind,
+} from './buildings';
 import type { Hydrology } from './hydrology';
 
 export type EventLevel = 'info' | 'warn' | 'danger' | 'good';
@@ -23,6 +29,8 @@ export interface DamageReport {
   flooded: number;
   /** 失われた建物 */
   destroyed: number;
+  /** 失われた建物の種類 (通常は空) */
+  destroyedKinds: BuildingKind[];
   /** ダムの売電収入 */
   hydroRevenue: number;
   /** 排水機場が汲み出した水量 (m^3) */
@@ -65,6 +73,7 @@ export class DamageSystem {
       breached: 0,
       flooded: 0,
       destroyed: 0,
+      destroyedKinds: [],
       hydroRevenue: 0,
       pumped: 0,
       floodedCells: 0,
@@ -80,10 +89,16 @@ export class DamageSystem {
 
       if (def.wallHeight > 0) {
         // --- 堰上げ構造物: 越流 → 損傷 → 決壊 -----------------------
+        //
+        // 判定は「構造物の天端 (全閉時の高さ) を水面が越えたか」で行う。
+        // ゲートを開けて放流している水は堤体の上を通っているわけではないので、
+        // 水深だけで判定すると正常な放流で勝手にダムが壊れてしまう。
         const speed = Math.hypot(w.vx[i], w.vy[i]);
-        if (depth > 0.08) {
+        const crest = w.height[i] + def.wallHeight * (0.35 + 0.65 * b.hp);
+        const over = w.solid[i] + depth - crest;
+        if (over > 0.05) {
           report.overtopping++;
-          const stress = (depth - 0.08) * (0.35 + speed * 0.5);
+          const stress = (over - 0.05) * (0.35 + speed * 0.5);
           b.hp -= stress * 0.16 * hours;
           if (b.hp <= 0) {
             doomed.push(b);
@@ -106,7 +121,7 @@ export class DamageSystem {
         if (b.kind === 'dam' && b.gate > 0.02) {
           const q = this.hydro.fluxMagnitude(b.x, b.y);
           const head = 16 * (1 - b.gate) + 4;
-          const power = Math.min(q, 90) * head * 0.02;
+          const power = Math.min(q, 90) * head * 0.028;
           b.rate = power;
           report.hydroRevenue += power * hours * b.hp;
         }
@@ -137,6 +152,7 @@ export class DamageSystem {
       const def = BUILDINGS[b.kind];
       w.removeBuilding(b.x, b.y);
       report.destroyed++;
+      report.destroyedKinds.push(b.kind);
       if (def.wallHeight > 0) {
         this.emit('danger', `${def.name}が決壊しました！ (${b.x},${b.y})`, day, hour);
       } else {

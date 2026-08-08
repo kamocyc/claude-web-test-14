@@ -23,6 +23,9 @@ export interface UICallbacks {
   onCloseGates(): void;
   onGate(b: Building, value: number): void;
   onMinimapClick(x: number, y: number): void;
+  onSave(): void;
+  onLoad(): void;
+  onLoadSample(): void;
 }
 
 interface PseudoTool {
@@ -209,6 +212,9 @@ export class UI {
       gridBtn.classList.toggle('active', this.showGrid);
     });
 
+    document.getElementById('btn-save')?.addEventListener('click', () => this.cb.onSave());
+    document.getElementById('btn-load')?.addEventListener('click', () => this.cb.onLoad());
+    document.getElementById('btn-sample')?.addEventListener('click', () => this.cb.onLoadSample());
     document.getElementById('btn-predischarge')?.addEventListener('click', () => this.cb.onPredischarge());
     document.getElementById('btn-closegates')?.addEventListener('click', () => this.cb.onCloseGates());
     document.getElementById('btn-help')?.addEventListener('click', () => this.el['help'].classList.remove('hidden'));
@@ -243,6 +249,20 @@ export class UI {
 
   hideLoading(): void {
     this.el['loading'].classList.add('hidden');
+  }
+
+  showLoading(text: string): void {
+    this.setLoadingText(text);
+    this.el['loading'].classList.remove('hidden');
+  }
+
+  /** 建て替えなどで世界そのものが入れ替わったときに UI をリセットする */
+  reset(): void {
+    this.clearSelection();
+    this.hideTooltip();
+    this.lastEventId = -1;
+    this.forecastKey = '';
+    this.el['events'].innerHTML = '';
   }
 
   setLoadingText(t: string): void {

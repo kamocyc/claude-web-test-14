@@ -93,9 +93,11 @@ export class City {
 
     // --- 収支 ---
     const tax = population * CITY.TAX_PER_CAPITA * this.satisfaction * hours;
-    const foodSales = Math.max(0, this.food - this.population * 2) * 0.015 * hours;
-    if (foodSales > 0) this.food -= foodSales / 0.9;
-    const income = tax + foodSales * 1.4 + hydroRevenue;
+    // 備蓄を超えた食料は出荷して現金にする (出荷能力には上限がある)
+    const buffer = population * 3 + 80;
+    const sold = Math.min(Math.max(0, this.food - buffer), CITY.FOOD_SHIP_RATE * hours);
+    this.food -= sold;
+    const income = tax + sold * CITY.FOOD_PRICE + hydroRevenue;
     const expense = this.upkeep() * hours;
     this.money += income - expense;
     this.income = income / Math.max(hours, 1e-6);

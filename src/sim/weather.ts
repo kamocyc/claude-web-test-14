@@ -215,6 +215,33 @@ export class Weather {
     this.inflow = Q_BASE * dryFactor + K_QUICK * Math.pow(this.quick, EXP_QUICK) + this.slow * K_SLOW;
   }
 
+  /** セーブ用の内部状態 (流域貯留は復元しないと洪水/渇水の位相がずれる) */
+  snapshotState(): { day: number; hour: number; quick: number; slow: number; dryDays: number } {
+    return {
+      day: this.day,
+      hour: this.hour,
+      quick: this.quick,
+      slow: this.slow,
+      dryDays: this.dryDays,
+    };
+  }
+
+  restoreState(s: { day: number; hour: number; quick: number; slow: number; dryDays: number }): void {
+    this.day = s.day;
+    this.hour = s.hour;
+    this.quick = s.quick;
+    this.slow = s.slow;
+    this.dryDays = s.dryDays;
+    this.today = dayWeather(this.seed, this.day);
+    this.rainRate = this.hourlyRain(this.day, this.hour);
+    this.tempC = this.today.tempC;
+    this.recentRain = [];
+    this.inflow =
+      Q_BASE * clamp(1 - this.dryDays / 26, 0.28, 1) +
+      K_QUICK * Math.pow(this.quick, EXP_QUICK) +
+      this.slow * K_SLOW;
+  }
+
   /** 直近24時間の積算雨量 (mm) */
   rain24h(): number {
     return this.recentRain.reduce((a, b) => a + b, 0);
