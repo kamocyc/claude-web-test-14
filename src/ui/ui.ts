@@ -74,7 +74,7 @@ const EXTRA_TOOLS: PseudoTool[] = [
   },
 ];
 
-const ORDER: (Category | 'misc')[] = ['misc', 'flood', 'water', 'agri', 'city', 'terrain'];
+const ORDER: (Category | 'misc')[] = ['misc', 'terrain', 'flood', 'water', 'agri', 'city'];
 
 /** 住宅がつながっている水道網の状態を人間向けに説明する */
 function describeNet(sim: Simulation, net: number): string {

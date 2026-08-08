@@ -110,7 +110,7 @@ body {
   position: absolute;
   top: 10px;
   left: 10px;
-  bottom: 96px;
+  bottom: 78px;
   width: 208px;
   display: flex;
   flex-direction: column;
@@ -145,15 +145,17 @@ body {
 #tool-groups {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 7px 8px;
+  /* 下に続きがあることを示すフェード */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
 }
 
 .tool-group + .tool-group {
-  margin-top: 10px;
+  margin-top: 7px;
 }
 
 .tool-group h3 {
-  margin: 0 0 5px;
+  margin: 0 0 3px;
   font-size: 10px;
   color: var(--muted);
   letter-spacing: 0.16em;
@@ -165,8 +167,8 @@ body {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
-  margin-bottom: 3px;
+  padding: 4px 8px;
+  margin-bottom: 2px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid transparent;
   border-radius: 6px;
@@ -188,8 +190,8 @@ body {
 }
 
 .tool-swatch {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   border-radius: 4px;
   flex: none;
   display: grid;
