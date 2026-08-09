@@ -88,8 +88,11 @@ describe('セーブ / ロード', () => {
       sim.stepHour();
       sim2.stepHour();
     }
-    // 同じ地形・同じ気象なので、その後の展開もほぼ一致する
-    expect(sim2.snapshot.inflow).toBeCloseTo(sim.snapshot.inflow, 2);
+    // 同じ地形・同じ気象なので、その後の展開もほぼ一致する。
+    // 流入量には土壌water由来の基底流出が乗り、土壌もセーブ時に量子化されるので、
+    // 絶対値ではなく相対で見る (絶対 0.005 だと流入が大きい流域で落ちる)。
+    const inflow = sim.snapshot.inflow;
+    expect(Math.abs(sim2.snapshot.inflow - inflow) / inflow).toBeLessThan(2e-3);
     // 水深はセーブ時に Uint16 (m×3000) へ量子化されるので、総量はぴったりには戻らない。
     // 誤差は「量子化幅 × セル数」で決まるため、絶対値ではなく相対で見る。
     const water = sim.world.totalWater();
@@ -150,12 +153,23 @@ describe('同梱のサンプルセーブ', () => {
 
     // (2) 町が取水している本流の上流にあること。
     //     別水系に架けると洪水調節にまったく効かない。
+    //
+    //     閾値が 0.25 なのは、ダムを山地の出口 (マップの北 1/3 の境) に置くように
+    //     地形を変えたため。町のすぐ隣に架ければ支配率は 50% を超えるが、それでは
+    //     上流域と下流域を分ける設計にならない。実測では 31% で、これは支流が
+    //     合わさる前の本流を押さえている状態にあたる。
     let intakeAcc = 0;
     for (const j of w.cellsInRadius(intake.x, intake.y, 6)) {
       intakeAcc = Math.max(intakeAcc, w.flowAcc[j]);
     }
     const damAcc = Math.max(...dams.map((d) => w.flowAcc[w.idx(d.x, d.y)]));
-    expect(damAcc / intakeAcc).toBeGreaterThan(0.5);
+    expect(damAcc / intakeAcc).toBeGreaterThan(0.25);
+    //     ダムが町より上流にあること。方角では判定しない (川は北へも東西へも流れる)。
+    //     水は低い方へ流れるので、「ダムの河床の方が町より高い」ことで見る。
+    const houses = [...w.buildings.values()].filter((b) => b.kind === 'house');
+    const townH = houses.reduce((s, b) => s + w.height[w.idx(b.x, b.y)], 0) / houses.length;
+    const damH = Math.min(...dams.map((d) => w.height[w.idx(d.x, d.y)]));
+    expect(damH).toBeGreaterThan(townH);
 
     // (3) 実際に水を貯めていること。
     //     上流が北とは限らない (川は東西にも北へも流れる) ので、

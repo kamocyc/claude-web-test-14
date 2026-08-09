@@ -97,6 +97,13 @@ function pickTownSite(sim: Simulation): Site | null {
       const i = w.idx(x, y);
       if (w.height[i] < 2) continue; // 河口の低湿地は避ける
 
+      // そばを流れている川の平常時の水面。町の敷地はここから余裕高を取る。
+      let riverLevel = -Infinity;
+      for (const j of w.cellsInRadius(x, y, 6)) {
+        if (w.water[j] > 0.15 && w.level(j) > riverLevel) riverLevel = w.level(j);
+      }
+      if (riverLevel === -Infinity) continue;
+
       // 近くを流れているのが本流かどうか (流域面積で見る)。
       // ここを見ないと、水はあるが集水域のない小さな枝沢に町を作ってしまい、
       // 上流にダムを架けても貯める水が無い、ということが起きる。
@@ -104,17 +111,23 @@ function pickTownSite(sim: Simulation): Site | null {
       for (const j of w.cellsInRadius(x, y, 3)) acc = Math.max(acc, w.flowAcc[j]);
       if (acc < MIN_RIVER_ACC) continue;
 
-      // 周囲に住宅を建てられる平地がどれだけあるか
-      let flat = 0;
+      // 周囲に「住宅を建てられて、かつ川の水面より 1.2m 高い」土地がどれだけあるか。
+      // 平地の広さだけで選ぶと、氾濫原のど真ん中がいちばん広くて平らなので、
+      // そこに町を作ってしまう。
+      let safeFlat = 0;
       for (const j of w.cellsInRadius(x, y, 7)) {
         const cx = j % w.w;
         const cy = (j / w.w) | 0;
-        if (w.canPlace('house', cx, cy).ok) flat++;
+        if (!w.canPlace('house', cx, cy).ok) continue;
+        if (w.height[j] < riverLevel + 1.2) continue;
+        safeFlat++;
       }
-      if (flat < 40) continue;
+      if (safeFlat < 40) continue;
 
-      const depth = w.maxWaterNear(x, y, 3);
-      const score = flat + depth * 25 + w.height[i] * 0.5 + Math.log(acc) * 22;
+      // 取水量は近傍の水深で決まるので浅すぎる川は避けるが、
+      // 深さを青天井で評価すると氾濫原に引き寄せられるので頭打ちにする。
+      const depth = Math.min(w.maxWaterNear(x, y, 3), 1.2);
+      const score = safeFlat + depth * 25 + Math.log(acc) * 22;
       if (score > bestScore) {
         bestScore = score;
         best = { x, y, dx: 0, dy: 0 };
@@ -173,6 +186,16 @@ function isSafeGround(w: World, x: number, y: number, baseHeight: number): boole
     const flood = w.floodMax[j];
     if (flood <= 0.1) continue;
     if (w.height[i] < w.height[j] + flood + 0.8) return false;
+  }
+
+  // 浸水履歴がまだ無い立ち上げ期でも、**平常時の川の水面より 1.2m は高い**こと。
+  // 履歴だけに頼ると最初の出水が来るまで氾濫原に建て続けてしまい、そのあと
+  // 町ごと水没する。標高の絶対値で足切りしても駄目で (地形が変われば効かなくなる)、
+  // 実際に平野を氾濫原として彫ったあと、標高 2.8m の氾濫原に町を作って
+  // 住宅8棟・人口5・資金マイナスで詰んでいた。
+  for (const j of w.cellsInRadius(x, y, 4)) {
+    if (w.water[j] < 0.15) continue;
+    if (w.height[i] < w.level(j) + 1.2) return false;
   }
   return true;
 }
