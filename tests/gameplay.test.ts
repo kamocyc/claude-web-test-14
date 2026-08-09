@@ -22,11 +22,26 @@ function flatTerrain(w: number, h: number, fn: (x: number, y: number) => number)
   };
 }
 
+/** 近くの川の平常時の水面より marginM 高いか (氾濫原・峡谷の底を避けるため) */
+function hasFreeboard(sim: Simulation, x: number, y: number, marginM: number): boolean {
+  const w = sim.world;
+  const h = w.height[w.idx(x, y)];
+  for (const j of w.cellsInRadius(x, y, 4)) {
+    if (w.water[j] < 0.15) continue;
+    if (h < w.level(j) + marginM) return false;
+  }
+  return true;
+}
+
 /**
  * 川の近くで、指定した施設を建てられるセルを探す。
  * `alsoFits` を渡すと「隣にその施設も建てられる」場所だけを返す。
  * (山あいの峡谷は取水はできても浄水場を置く平地がないので、上水道一式を
  *  組む試験では、まとめて置ける場所を選ぶ必要がある)
+ *
+ * さらに、その隣接セルには**川の水面からの余裕高**を要求する。要求しないと
+ * 上流の峡谷に一式を組んでしまい、出水で途中の1棟が流されて水道網が分断され、
+ * 「配水池は満杯なのに住宅へ届かない」状態になる (上水道の試験としては無意味)。
  */
 function findSpot(
   sim: Simulation,
@@ -50,7 +65,10 @@ function findSpot(
           [0, 1],
           [-1, 0],
           [0, -1],
-        ].filter(([dx, dy]) => w.canPlace(alsoFits, x + dx, y + dy).ok).length;
+        ].filter(
+          ([dx, dy]) =>
+            w.canPlace(alsoFits, x + dx, y + dy).ok && hasFreeboard(sim, x + dx, y + dy, 1.5),
+        ).length;
         if (room < 3) continue;
       }
       return { x, y };
