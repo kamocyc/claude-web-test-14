@@ -91,6 +91,21 @@ function boot(): void {
       }
     },
     graphics: gfx,
+    onUnlimited: (on) => {
+      sim.city.unlimited = on;
+      sim.damage.info(
+        on
+          ? '資金無制限モードにしました (建設費・維持費で資金が減りません)'
+          : `資金無制限モードを解除しました (残高 ￥${Math.round(sim.city.money).toLocaleString('ja-JP')})`,
+        sim.weather.day,
+        sim.weather.hour,
+        'info',
+      );
+    },
+    onBulldoze: (b) => {
+      const r = sim.bulldoze(b.x, b.y);
+      sim.damage.info(r.message, sim.weather.day, sim.weather.hour, r.ok ? 'good' : 'warn');
+    },
     onWeather: (next) => {
       sim.weather.setManual(next);
       sim.damage.info(
@@ -418,6 +433,19 @@ function boot(): void {
         case 'Q':
           ui.setTool('inspect');
           break;
+        case 'x':
+        case 'X':
+        case 'Delete':
+          // 撤去ツール (施設を選んでいるなら、それを直接撤去する)
+          if (ui.selected) {
+            const b = ui.selected;
+            const r = sim.bulldoze(b.x, b.y);
+            sim.damage.info(r.message, sim.weather.day, sim.weather.hour, r.ok ? 'good' : 'warn');
+            ui.clearSelection();
+          } else {
+            ui.setTool('bulldoze');
+          }
+          break;
         case 'm':
         case 'M':
           ui.setOverlay(ui.overlay === 'moisture' ? 'none' : 'moisture');
@@ -454,6 +482,7 @@ function boot(): void {
         case 'Escape':
           ui.setTool('inspect');
           ui.clearSelection();
+          ui.closePanels();
           document.getElementById('help')?.classList.add('hidden');
           break;
         default:

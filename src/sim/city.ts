@@ -22,6 +22,11 @@ export interface CityStats {
 /** 都市の人口・経済。 */
 export class City {
   money = CITY.START_MONEY;
+  /**
+   * 資金無制限モード。建設費・維持費で資金が減らず、いくらでも建てられる。
+   * (地形や水の挙動は変えないので、治水そのものは通常どおり難しい)
+   */
+  unlimited = false;
   food = 260;
   population = 0;
   satisfaction = 1;
@@ -99,7 +104,8 @@ export class City {
     this.food -= sold;
     const income = tax + sold * CITY.FOOD_PRICE + hydroRevenue;
     const expense = this.upkeep() * hours;
-    this.money += income - expense;
+    // 無制限モードでも収支の内訳は出す (残高だけ動かさない)
+    if (!this.unlimited) this.money += income - expense;
     this.income = income / Math.max(hours, 1e-6);
     this.expense = expense / Math.max(hours, 1e-6);
 
@@ -119,12 +125,17 @@ export class City {
   }
 
   canAfford(cost: number): boolean {
-    return this.money >= cost;
+    return this.unlimited || this.money >= cost;
   }
 
   spend(cost: number): boolean {
     if (!this.canAfford(cost)) return false;
-    this.money -= cost;
+    if (!this.unlimited) this.money -= cost;
     return true;
+  }
+
+  /** 撤去の返金など、臨時の収入 */
+  earn(amount: number): void {
+    if (!this.unlimited) this.money += amount;
   }
 }

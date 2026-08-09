@@ -30,6 +30,10 @@ export interface UICallbacks {
   graphics: GraphicsSettings;
   /** 手動天気の設定 (null で暦どおりに戻す) */
   onWeather(next: ManualWeather | null): void;
+  /** 資金無制限モードの切り替え */
+  onUnlimited(on: boolean): void;
+  /** 選択中の施設を撤去する */
+  onBulldoze(b: Building): void;
 }
 
 /** 手動天気パネルのプリセット */
@@ -68,7 +72,7 @@ const EXTRA_TOOLS: PseudoTool[] = [
     label: '×',
     color: '#c96a5a',
     cost: '25%返金',
-    desc: '施設を撤去する。',
+    desc: '置いた施設を撤去する (X キー)。選んでからクリック、ドラッグでまとめて撤去。建設費の25%が戻る。調査モードで施設をクリックし、右のパネルの「この施設を撤去」からでも消せる。',
     category: 'misc',
   },
   {
@@ -92,6 +96,13 @@ const EXTRA_TOOLS: PseudoTool[] = [
 ];
 
 const ORDER: (Category | 'misc')[] = ['misc', 'terrain', 'flood', 'water', 'agri', 'city'];
+
+/** 右下に開くパネル (同じ場所に出るので、開けるのは常に1枚だけ) */
+const PANELS: { btn: string; panel: string }[] = [
+  { btn: 'btn-weather', panel: 'weather-panel' },
+  { btn: 'btn-gfx', panel: 'gfx-panel' },
+  { btn: 'btn-rules', panel: 'rules-panel' },
+];
 
 /** 住宅がつながっている水道網の状態を人間向けに説明する */
 function describeNet(sim: Simulation, net: number): string {
@@ -148,13 +159,48 @@ export class UI {
       'chip-inflow',
       'gfx-panel',
       'weather-panel',
+      'rules-panel',
     ]) {
       this.el[id] = q(id);
     }
     this.buildToolbar();
     this.buildGraphicsPanel();
     this.buildWeatherPanel();
+    this.buildRulesPanel();
     this.wire();
+    this.layoutEvents();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* ゲームルール (資金無制限など)                                       */
+  /* ---------------------------------------------------------------- */
+
+  /** 資金無制限モードが有効か (HUD の表示に使う) */
+  private unlimitedMoney = false;
+
+  private buildRulesPanel(): void {
+    const host = this.el['rules-panel'];
+    host.innerHTML = `
+      <h3>ゲームルール</h3>
+      <label class="gfx-row check"><input type="checkbox" id="rule-money" /><span>資金無制限モード</span></label>
+      <p class="gfx-note">建設費・維持費で資金が減らなくなり、好きなだけ建てられます。
+        水の流れ方は変わらないので、治水そのものは通常どおりです。
+        セーブにも記録され、解除すればそのときの残高から再開します。</p>
+    `;
+    const box = document.getElementById('rule-money') as HTMLInputElement;
+    box.addEventListener('change', () => {
+      this.unlimitedMoney = box.checked;
+      this.cb.onUnlimited(box.checked);
+    });
+  }
+
+  /** シミュレーション側の設定をパネルに反映する (セーブ読み込み後など) */
+  private syncRulesPanel(sim: Simulation): void {
+    const on = sim.city.unlimited;
+    if (on === this.unlimitedMoney) return;
+    this.unlimitedMoney = on;
+    const box = document.getElementById('rule-money') as HTMLInputElement | null;
+    if (box) box.checked = on;
   }
 
   /* ---------------------------------------------------------------- */
@@ -264,7 +310,11 @@ export class UI {
       const txt = on
         ? `いま: ${SKY_LABEL[w.today.kind]} ${w.rainRate.toFixed(1)}mm/h ${w.tempC.toFixed(0)}℃ / 流入 ${w.inflow.toFixed(1)} m³/s (手動)`
         : `いま: 暦どおり (${w.dateLabel()}) ${SKY_LABEL[w.today.kind]} ${w.rainRate.toFixed(1)}mm/h / 流入 ${w.inflow.toFixed(1)} m³/s`;
-      if (now.textContent !== txt) now.textContent = txt;
+      if (now.textContent !== txt) {
+        now.textContent = txt;
+        // 行数が変わるとパネルの高さも変わるので、ログの位置を取り直す
+        this.layoutEvents();
+      }
     }
   }
 
@@ -396,27 +446,53 @@ export class UI {
     document.getElementById('btn-sample')?.addEventListener('click', () => this.cb.onLoadSample());
     document.getElementById('btn-predischarge')?.addEventListener('click', () => this.cb.onPredischarge());
     document.getElementById('btn-closegates')?.addEventListener('click', () => this.cb.onCloseGates());
-    const togglePanel = (btnId: string, panelId: string, otherId: string, otherBtnId: string): void => {
+    for (const { btn: btnId, panel: panelId } of PANELS) {
       const btn = document.getElementById(btnId) as HTMLButtonElement | null;
-      btn?.addEventListener('click', () => {
-        const hidden = this.el[panelId].classList.toggle('hidden');
-        btn.classList.toggle('active', !hidden);
-        // パネルは重なる位置にあるので、片方を開いたらもう片方は閉じる
-        this.el[otherId].classList.add('hidden');
-        document.getElementById(otherBtnId)?.classList.remove('active');
-      });
-    };
-    togglePanel('btn-gfx', 'gfx-panel', 'weather-panel', 'btn-weather');
-    togglePanel('btn-weather', 'weather-panel', 'gfx-panel', 'btn-gfx');
+      btn?.addEventListener('click', () => this.openPanel(this.el[panelId].classList.contains('hidden') ? panelId : null));
+    }
     document.getElementById('btn-help')?.addEventListener('click', () => this.el['help'].classList.remove('hidden'));
     document.getElementById('help-close')?.addEventListener('click', () => this.el['help'].classList.add('hidden'));
     document.getElementById('insp-close')?.addEventListener('click', () => this.clearSelection());
+
+    window.addEventListener('resize', () => this.layoutEvents());
 
     const mini = this.el['minimap'] as HTMLCanvasElement;
     mini.addEventListener('click', (e) => {
       const r = mini.getBoundingClientRect();
       this.cb.onMinimapClick((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
     });
+  }
+
+  /**
+   * 右下のパネルを開く (null ですべて閉じる)。
+   * イベントログはパネルと同じ隅に出るので、開いているあいだはパネルの高さぶん
+   * 上へ逃がして重ならないようにする (パネルの高さは中身によって変わるので、
+   * CSS で固定せず開いたときに測る)。
+   */
+  private openPanel(panelId: string | null): void {
+    for (const p of PANELS) {
+      const on = p.panel === panelId;
+      this.el[p.panel].classList.toggle('hidden', !on);
+      document.getElementById(p.btn)?.classList.toggle('active', on);
+    }
+    this.layoutEvents();
+  }
+
+  /** イベントログの下端をパネルの上に合わせる */
+  private layoutEvents(): void {
+    const open = PANELS.map((p) => this.el[p.panel]).find((el) => !el.classList.contains('hidden'));
+    // 74px = パネルの bottom / 106px = パネルを開いていないときの下端 (style.css と揃える)
+    const bottom = open ? 74 + open.offsetHeight + 10 : 106;
+    const el = this.el['events'];
+    el.style.bottom = `${bottom}px`;
+    // 押し上げたぶん上端が上部バーやミニマップにかからないよう高さを抑える
+    // (あふれたら古いものから隠れる)
+    el.style.maxHeight = `${Math.max(90, window.innerHeight - bottom - 180)}px`;
+  }
+
+  /** 開いているパネルをすべて閉じる (Escape など) */
+  closePanels(): void {
+    this.openPanel(null);
   }
 
   setTool(tool: ToolKind): void {
@@ -479,13 +555,13 @@ export class UI {
       `${w.manual ? '✋ ' : ''}${SKY_ICON[w.today.kind]} ${SKY_LABEL[w.today.kind]} ${w.rainRate > 0.05 ? `${w.rainRate.toFixed(1)}mm/h` : ''} ${w.tempC.toFixed(0)}℃`,
     );
     set('v-inflow', `${s.inflow.toFixed(1)} m³/s ${inflowLabel(s.inflow)}`);
-    set('v-money', `￥${Math.round(s.city.money).toLocaleString('ja-JP')}`);
+    set('v-money', sim.city.unlimited ? '￥∞' : `￥${Math.round(s.city.money).toLocaleString('ja-JP')}`);
     set('v-pop', `${Math.round(s.city.population).toLocaleString('ja-JP')}`);
     set('v-water', `${Math.round((s.net.demand > 0 ? s.net.served / s.net.demand : 1) * 100)}%`);
     set('v-food', `${Math.round(s.city.food)}`);
     set('v-flood', `${s.damage.floodedCells} セル`);
 
-    this.el['chip-money'].classList.toggle('alert', s.city.money < 0);
+    this.el['chip-money'].classList.toggle('alert', s.city.money < 0 && !sim.city.unlimited);
     this.el['chip-water'].classList.toggle('alert', s.net.demand > 0 && s.net.served / s.net.demand < 0.7);
     this.el['chip-flood'].classList.toggle('alert', s.damage.floodedCells > 60);
     this.el['chip-flood'].classList.toggle('warn-on', s.damage.floodedCells > 8 && s.damage.floodedCells <= 60);
@@ -495,6 +571,7 @@ export class UI {
     this.updateEvents(sim);
     this.updateForecast(sim);
     this.syncWeatherPanel(sim);
+    this.syncRulesPanel(sim);
     if (this.selected) this.renderInspector(sim);
     else if (this.selectedCell) this.renderCellInspector(sim, this.selectedCell.x, this.selectedCell.y);
   }
@@ -649,10 +726,34 @@ export class UI {
       this.inspKey = key;
       this.el['insp-body'].innerHTML = `<div id="insp-stats"></div><div id="insp-ctl"></div>`;
       if (def.hasGate) this.buildGateControl();
+      this.buildRemoveControl();
     }
     const stats = document.getElementById('insp-stats');
     if (stats) stats.innerHTML = html;
     if (def.hasGate) this.syncGateControl(b.gate);
+  }
+
+  /**
+   * 撤去ボタン。ツールバーの「撤去 (×)」に気づかなくても、
+   * 施設をクリックすればここから消せるようにしておく。
+   */
+  private buildRemoveControl(): void {
+    const host = document.getElementById('insp-ctl');
+    if (!host) return;
+    host.insertAdjacentHTML(
+      'beforeend',
+      `<div class="insp-actions">
+        <button class="danger" id="insp-remove">この施設を撤去</button>
+      </div>
+      <p class="insp-note">ツールバーの<b>撤去 (×)</b> または <b>X キー</b>でも、クリック/ドラッグでまとめて撤去できます。
+        建設費の 25% (損傷ぶんを除く) が戻ります。</p>`,
+    );
+    document.getElementById('insp-remove')?.addEventListener('click', () => {
+      const target = this.selected;
+      if (!target) return;
+      this.cb.onBulldoze(target);
+      this.clearSelection();
+    });
   }
 
   /** ゲート操作 UI を1度だけ組み立てる */

@@ -140,6 +140,13 @@ void main() {
   vec3 V = normalize(cameraPosition - vWPos);
   float fres = 0.02 + 0.98 * pow(clamp(1.0 - max(dot(N, V), 0.0), 0.0, 1.0), 5.0);
 
+  // 引いて見ると視線が水面をかすめるため、フレネルがどこも 1 に近づいて
+  // 川面が一様な「空の鏡」になり、地形も水の広がりも読めなくなる。
+  // 遠景ほど反射を抑え、水そのものの色を残す。
+  float viewDist = length(cameraPosition - vWPos);
+  float far = smoothstep(260.0, 1100.0, viewDist);
+  float fresMax = mix(0.78, 0.34, far);
+
   // --- 反射 ---
   vec3 R = reflect(-V, N);
   R.y = abs(R.y) * 0.85 + 0.02;
@@ -151,9 +158,12 @@ void main() {
   body *= (0.35 + 0.65 * uAmbient);
 
   // --- 太陽のハイライト ---
+  // 遠景では 1 ピクセルに波が何本も入ってギラつく (ブルームで増幅されて白飛びする)
+  // ので、距離に応じて弱める。
   vec3 H = normalize(uSunDir + V);
-  float spec = pow(max(dot(N, H), 0.0), 380.0) * 5.5 + pow(max(dot(N, H), 0.0), 32.0) * 0.25;
-  vec3 color = mix(body, sky, clamp(fres, 0.02, 0.92)) + uSunColor * spec * clamp(uSunDir.y * 3.0, 0.0, 1.0);
+  float spec = pow(max(dot(N, H), 0.0), 380.0) * 3.0 + pow(max(dot(N, H), 0.0), 32.0) * 0.18;
+  spec *= mix(1.0, 0.22, far);
+  vec3 color = mix(body, sky, clamp(fres, 0.02, fresMax)) + uSunColor * spec * clamp(uSunDir.y * 3.0, 0.0, 1.0);
 
   // --- 泡 ---
   float foamTexA = texture2D(uFoamTex, vWPos.xz * 0.16 - dir * uTime * 0.55).a;
@@ -165,7 +175,7 @@ void main() {
   color = mix(color, vec3(0.92, 0.96, 1.0) * (0.45 + 0.55 * uAmbient), foam * 0.8);
 
   float alpha = clamp(1.0 - exp(-vDepth * 3.4), 0.12, 0.95);
-  alpha = mix(alpha, 1.0, fres * 0.7);
+  alpha = mix(alpha, 1.0, min(fres, fresMax) * 0.7);
   alpha = clamp(alpha + foam * 0.45, 0.0, 1.0);
 
   // オーバーレイは水の上にも出す (氾濫域が水面下に隠れないように)

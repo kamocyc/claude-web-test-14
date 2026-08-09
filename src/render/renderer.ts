@@ -151,7 +151,8 @@ export class Renderer {
     seaGeo.rotateX(-Math.PI / 2);
     const sea = new THREE.Mesh(
       seaGeo,
-      new THREE.MeshStandardMaterial({ color: 0x16384f, roughness: 0.12, metalness: 0.35 }),
+      // ほぼ鏡にすると、引いたときに海面全体が空を映して真っ白に光る
+      new THREE.MeshStandardMaterial({ color: 0x16384f, roughness: 0.5, metalness: 0.12 }),
     );
     sea.position.set((MAP * CELL) / 2, -0.35 * this.settings.vscale, (MAP * CELL) / 2);
     sea.renderOrder = -1;

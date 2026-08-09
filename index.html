@@ -92,12 +92,14 @@
           <button id="btn-grid">格子 (G)</button>
           <button id="btn-weather" title="天気を自由に変える (暦を無視して降らせる)">天気</button>
           <button id="btn-gfx" title="描画品質・高低差の強調">画質</button>
+          <button id="btn-rules" title="資金無制限モードなどの遊び方の設定">ルール</button>
         </div>
         <div id="forecast"></div>
       </footer>
 
       <div id="gfx-panel" class="panel hidden"></div>
       <div id="weather-panel" class="panel hidden"></div>
+      <div id="rules-panel" class="panel hidden"></div>
 
       <div id="tooltip" class="hidden"></div>
 
@@ -128,8 +130,30 @@
               <li>ホイール: ズーム (カーソルの地点へ寄ります) / PageUp・PageDown でも / R: 視点リセット</li>
               <li>Space: 一時停止 / 1・2・3・4: 速度</li>
               <li>Q: 調査モード、M/H/E/N: 表示切替、F: 流線、G: 格子</li>
+              <li><b>X (または Delete): 撤去</b> — 詳しくは下の「置いたものを撤去する」を参照</li>
               <li>右下の<b>画質</b>から、描画品質・高低差の強調・影・樹木・時刻連動の日照を切り替えられます。
                 動作が重いときは品質を「低」にしてください。</li>
+            </ul>
+          </section>
+          <section>
+            <h3>置いたものを撤去する</h3>
+            <ul>
+              <li>ツールバー上部「操作」の<b>撤去 (× 25%返金)</b> を選び、消したい施設を<b>クリック</b>します。
+                <b>ドラッグ</b>すれば水道管や堤防をまとめて撤去できます。<b>X キー</b>でもこのツールに切り替わります。</li>
+              <li><b>調査 (?)</b> で施設をクリックすると右側にパネルが出ます。その一番下の
+                <b>「この施設を撤去」</b>ボタンからも消せます (選択中に X キー / Delete キーでも同じ)。</li>
+              <li>撤去すると建設費の <b>25%</b> が戻ります (傷んだ施設ほど戻る額は少なくなります)。</li>
+              <li>掘削・盛土で変えた地面は「撤去」では戻せません。<b>盛土</b>と<b>掘削</b>を逆に使って高さを戻してください。</li>
+            </ul>
+          </section>
+          <section>
+            <h3>資金無制限モード</h3>
+            <ul>
+              <li>右下の<b>ルール</b>を押し、<b>資金無制限モード</b>にチェックを入れると、建設費も維持費も
+                資金を減らさなくなります (資金の表示は <b>￥∞</b> になります)。</li>
+              <li>お金の心配なくダムや堤防を試したいとき、地形を大きくいじって水の動きを確かめたいときにどうぞ。
+                水の流れ方は変わらないので、治水の難しさはそのままです。</li>
+              <li>チェックを外せば、そのときの残高から通常モードに戻ります。設定は保存データにも記録されます。</li>
             </ul>
           </section>
           <section>
