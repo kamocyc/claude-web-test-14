@@ -190,7 +190,7 @@ export class Simulation {
         // 収穫は毎時起きるので日次通知はしない
       }
     }
-    if (city.money < 0 && w.hour === 0) {
+    if (city.money < 0 && w.hour === 0 && !this.city.unlimited) {
       this.damage.info('財政が赤字です。維持費を見直してください。', w.day, w.hour, 'warn');
     }
 
@@ -227,9 +227,12 @@ export class Simulation {
     const def = BUILDINGS[b.kind];
     const refund = Math.round(def.cost * 0.25 * b.hp);
     this.world.removeBuilding(x, y);
-    this.city.money += refund;
+    this.city.earn(refund);
     if (def.network) this.network.markDirty();
-    return { ok: true, message: `${def.name}を撤去 (+￥${refund})` };
+    return {
+      ok: true,
+      message: this.city.unlimited ? `${def.name}を撤去` : `${def.name}を撤去 (+￥${refund})`,
+    };
   }
 
   /** 掘削 (delta<0) / 盛土 (delta>0) */
@@ -240,7 +243,7 @@ export class Simulation {
     if (!this.city.canAfford(cost)) return { ok: false, message: '資金が足りません' };
     const moved = this.world.modifyTerrain(x, y, delta);
     if (moved <= 0) return { ok: false, message: 'ここは改変できません' };
-    this.city.money -= cost;
+    this.city.spend(cost);
     return { ok: true, message: delta < 0 ? `掘削 (￥${cost})` : `盛土 (￥${cost})` };
   }
 

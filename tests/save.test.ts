@@ -100,6 +100,22 @@ describe('セーブ / ロード', () => {
     expect(sim2.hydro.sanityCheck()).toBe(true);
   }, 120000);
 
+  it('資金無制限モードの設定も保存・復元される', () => {
+    const sim = makeSim(7777);
+    sim.city.unlimited = true;
+    const data = serialize(sim);
+    expect(data.city.unlimited).toBe(true);
+
+    const sim2 = makeSim(7777);
+    applySave(sim2, data);
+    expect(sim2.city.unlimited).toBe(true);
+
+    // 設定のないデータ (旧セーブ) を読んだら通常モードに戻す
+    const legacy: SaveData = { ...data, city: { money: data.city.money, food: data.city.food } };
+    applySave(sim2, legacy);
+    expect(sim2.city.unlimited).toBe(false);
+  }, 120000);
+
   it('壊れたデータや形式違いは拒否する', () => {
     expect(() => validate(null)).toThrow(SaveError);
     expect(() => validate({ version: 999, seed: 1, buildings: [], mapSize: 192 })).toThrow(SaveError);

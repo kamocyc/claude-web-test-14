@@ -299,6 +299,26 @@ button.ghost:hover {
   color: var(--muted);
 }
 
+.insp-actions {
+  margin-top: 10px;
+}
+
+.insp-actions button.danger {
+  width: 100%;
+  padding: 6px 8px;
+  background: rgba(201, 106, 90, 0.18);
+  border: 1px solid rgba(201, 106, 90, 0.6);
+  border-radius: 6px;
+  color: #f0c2b8;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.insp-actions button.danger:hover {
+  background: rgba(201, 106, 90, 0.34);
+}
+
 .gate-row {
   margin-top: 10px;
 }
@@ -367,6 +387,9 @@ input[type='range'] {
   gap: 4px;
   z-index: 5;
   pointer-events: none;
+  /* 下端と高さは UI 側で決める (右下のパネルを開いたらその上へ逃がす) */
+  overflow: hidden;
+  transition: bottom 0.18s ease;
 }
 
 .event {
@@ -627,11 +650,10 @@ input[type='range'] {
 }
 
 /* ------------------------------------------------------------------ */
-/* 画質設定パネル                                                       */
+/* 右下パネル (画質・天気・ルール)                                       */
 /* ------------------------------------------------------------------ */
 
-#gfx-panel,
-#weather-panel {
+.panel {
   position: absolute;
   right: 10px;
   bottom: 74px;
@@ -645,13 +667,7 @@ input[type='range'] {
   z-index: 12;
 }
 
-#gfx-panel.hidden,
-#weather-panel.hidden {
-  display: none;
-}
-
-#gfx-panel h3,
-#weather-panel h3 {
+.panel h3 {
   margin: 0 0 10px;
   font-size: 12px;
   color: var(--muted);

@@ -362,8 +362,8 @@ export class SkyEnv {
     this.dome.position.copy(opt.cameraPos);
     this.dome.scale.setScalar(Math.max(400, opt.viewRadius * 6));
 
-    // 霧
-    const fogDensity = 0.00012 + overcast * 0.00035 + Math.min(opt.rainRate, 40) * 0.000025;
+    // 霧。雨で濃くしすぎると遠景が一様に霞んで、川筋も地形も読めなくなる
+    const fogDensity = 0.00012 + overcast * 0.00025 + Math.min(opt.rainRate, 40) * 0.000012;
     const fog = opt.scene.fog as THREE.FogExp2 | null;
     if (fog) {
       fog.color.copy(pal.fog);
@@ -374,7 +374,9 @@ export class SkyEnv {
     // 降水
     const isSnow = opt.kind === 'snow';
     const amount = clamp(opt.rainRate / 22, 0, 1);
-    this.rainMat.uniforms.uOpacity.value = amount * (isSnow ? 0.9 : 0.7);
+    // 雨粒は画面全体に重なるので、濃く青いと地表が青いベールで覆われてしまう。
+    // 粒は薄め・色は中間色にして、雨だと分かる程度にとどめる。
+    this.rainMat.uniforms.uOpacity.value = amount * (isSnow ? 0.85 : 0.4);
     const area = clamp(opt.viewRadius * 0.9, 150, 700);
     this.rainMat.uniforms.uArea.value = area;
     this.rainMat.uniforms.uHeight.value = area * 0.8;
@@ -384,7 +386,7 @@ export class SkyEnv {
       .setY(Math.max(opt.focus.y, opt.cameraPos.y * 0.5) + area * 0.25);
     this.rainMat.uniforms.uFall.value = isSnow ? 0.1 : 0.85;
     this.rainMat.uniforms.uSize.value = isSnow ? 3.4 : 1.5;
-    this.rainMat.uniforms.uColor.value.set(isSnow ? 0xffffff : 0xcfe0f0);
+    this.rainMat.uniforms.uColor.value.set(isSnow ? 0xffffff : 0xdfe5ea);
     this.rain.visible = amount > 0.01;
 
     this.state = {

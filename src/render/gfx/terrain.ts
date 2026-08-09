@@ -196,10 +196,14 @@ const COLOR_BODY = /* glsl */ `
   base *= cavity;
 
   // --- 濡れ ---
-  float wetNear = max(depth * 6.0, surf.b * 0.55);
-  float wet = clamp(max(wetNear, uWetness * 0.45), 0.0, 1.0);
-  base *= mix(1.0, 0.58, wet);
-  base = mix(base, base * vec3(0.85, 0.92, 1.0), wet * 0.5);
+  // 実際に水があるところ (水たまり・潤った土) と、降っているあいだの湿りは分ける。
+  // 雨のたびに地表が青くなると地形が読めなくなるので、青みは水がある所だけに限り、
+  // 雨は「わずかに落ち着いた色になる」程度にとどめる。
+  float wetNear = clamp(max(depth * 6.0, surf.b * 0.55), 0.0, 1.0);
+  float rainWet = clamp(uWetness, 0.0, 1.0) * 0.3;
+  float wet = max(wetNear, rainWet);
+  base *= mix(1.0, 0.74, wet);
+  base = mix(base, base * vec3(0.93, 0.97, 1.0), wetNear * 0.3);
 
   vec3 albedo = base;
 
@@ -280,8 +284,9 @@ export class TerrainMesh {
             {
               vec4 wq = sampleV(uWaterTex, vCell);
               float wetR = clamp(max(wq.g * 8.0, sampleV(uSurfTex, vCell).b * 0.5), 0.0, 1.0);
-              roughnessFactor = mix(0.95, 0.42, wetR) - texture2D(uDetailTex, vWPos.xz * 0.10).r * 0.12;
-              roughnessFactor = clamp(roughnessFactor, 0.18, 1.0);
+              // 濡れた地面をあまり鏡面にすると、遠景で一面が光ってしまう
+              roughnessFactor = mix(0.95, 0.62, wetR) - texture2D(uDetailTex, vWPos.xz * 0.10).r * 0.10;
+              roughnessFactor = clamp(roughnessFactor, 0.34, 1.0);
             }
           `,
         );

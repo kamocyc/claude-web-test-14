@@ -164,6 +164,32 @@ describe('Simulation (統合)', () => {
     expect(sim.world.buildings.size).toBe(0);
   }, 60000);
 
+  it('資金無制限モードでは資金 0 でも建設でき、残高が動かない', () => {
+    const sim = new Simulation(999, 0.12);
+    sim.city.money = 0;
+    sim.city.unlimited = true;
+
+    let spot: { x: number; y: number } | null = null;
+    for (let y = 4; y < 40 && !spot; y += 2) {
+      for (let x = 4; x < 40; x += 2) {
+        if (sim.build('house', x, y).ok) {
+          spot = { x, y };
+          expect(sim.city.money).toBe(0);
+          // 撤去の返金も入らない (残高は固定)
+          expect(sim.bulldoze(x, y).ok).toBe(true);
+          expect(sim.city.money).toBe(0);
+          break;
+        }
+      }
+    }
+    expect(spot).not.toBeNull();
+
+    // 維持費でも減らない
+    expect(sim.build('house', spot!.x, spot!.y).ok).toBe(true);
+    for (let i = 0; i < 24; i++) sim.stepHour();
+    expect(sim.city.money).toBe(0);
+  }, 60000);
+
   it('ダムのゲートを閉じると堰の天端が上がる', () => {
     const sim = new Simulation(555, 0.12);
     // 川沿いのセルを探してダムを置く

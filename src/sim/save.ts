@@ -35,6 +35,8 @@ export interface SaveData {
   city: {
     money: number;
     food: number;
+    /** 資金無制限モード (古いセーブにはないので任意) */
+    unlimited?: boolean;
   };
   /** 地形改変のあったセルだけ [index, height, ...] */
   terrainEdits: number[];
@@ -136,7 +138,11 @@ export function serialize(sim: Simulation, label = 'セーブデータ'): SaveDa
     seed: sim.seed,
     mapSize: w.w,
     weather: ws,
-    city: { money: round(sim.city.money, 2), food: round(sim.city.food, 2) },
+    city: {
+      money: round(sim.city.money, 2),
+      food: round(sim.city.food, 2),
+      unlimited: sim.city.unlimited,
+    },
     terrainEdits: edits,
     water: packU16(w.water, WATER_SCALE),
     soil: packU8(w.soil, HYDRO.SOIL_CAPACITY),
@@ -231,6 +237,7 @@ export function applySave(sim: Simulation, data: SaveData): void {
   sim.weather.restoreState(data.weather);
   sim.city.money = data.city.money;
   sim.city.food = data.city.food;
+  sim.city.unlimited = data.city.unlimited === true;
   sim.network.markDirty();
   sim.moisture.compute();
   sim.moisture.apply(24);
