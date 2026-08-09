@@ -191,6 +191,55 @@ function boot(): void {
   /* 入力                                                              */
   /* ---------------------------------------------------------------- */
 
+  /** 押しっぱなしを見るキー (カメラ操作) */
+  const CAMERA_KEYS = new Set([
+    'w',
+    'a',
+    's',
+    'd',
+    'arrowup',
+    'arrowdown',
+    'arrowleft',
+    'arrowright',
+    'pageup',
+    'pagedown',
+    '+',
+    ';', // JIS 配列の + は Shift+;
+    '-',
+    '=',
+    'shift',
+  ]);
+  const heldKeys = new Set<string>();
+
+  /** 押されているキーに応じてカメラを動かす (dt は実時間の秒) */
+  function applyCameraKeys(dt: number): void {
+    if (heldKeys.size === 0) return;
+    const on = (...names: string[]): boolean => names.some((n) => heldKeys.has(n));
+    const rotating = heldKeys.has('shift');
+
+    let x = 0;
+    let z = 0;
+    if (on('a', 'arrowleft')) x -= 1;
+    if (on('d', 'arrowright')) x += 1;
+    if (on('w', 'arrowup')) z += 1;
+    if (on('s', 'arrowdown')) z -= 1;
+
+    if (rotating) {
+      // Shift + 方向キーで視点を回す (ドラッグの回転と同じ向き)
+      if (x !== 0 || z !== 0) camera.rotateBy(x * 1.6 * dt, z * 0.9 * dt);
+    } else if (x !== 0 || z !== 0) {
+      // 移動量はズームに比例させる (引いているときほど速く動く)
+      const speed = camera.distance * 1.15 * dt;
+      const len = Math.hypot(x, z);
+      camera.moveBy((x / len) * speed, (z / len) * speed);
+    }
+
+    let zoom = 0;
+    if (on('pageup', '+', ';', '=')) zoom += 1;
+    if (on('pagedown', '-')) zoom -= 1;
+    if (zoom !== 0) camera.zoomBy(Math.pow(2.4, zoom * dt));
+  }
+
   let panning = false;
   let orbiting = false;
   let painting = false;
@@ -325,8 +374,18 @@ function boot(): void {
 
     window.addEventListener('resize', () => renderer.resize());
 
+    // カメラ移動は「押している間ずっと」動かしたいので、キーの状態だけ持っておき、
+    // 実際の移動はメインループで dt を掛けて行う (keydown のリピートに任せると
+    // 押し始めに間が空いてカクつく)
+    window.addEventListener('keyup', (e) => heldKeys.delete(e.key.toLowerCase()));
+    window.addEventListener('blur', () => heldKeys.clear());
+
     window.addEventListener('keydown', (e) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (CAMERA_KEYS.has(e.key.toLowerCase())) {
+        heldKeys.add(e.key.toLowerCase());
+        e.preventDefault();
+      }
       switch (e.key) {
         case ' ':
           e.preventDefault();
@@ -372,18 +431,6 @@ function boot(): void {
           ui.showGrid = !ui.showGrid;
           document.getElementById('btn-grid')?.classList.toggle('active', ui.showGrid);
           break;
-        case 'ArrowLeft':
-          camera.rotateBy(-0.09, 0);
-          break;
-        case 'ArrowRight':
-          camera.rotateBy(0.09, 0);
-          break;
-        case 'ArrowUp':
-          camera.rotateBy(0, 0.05);
-          break;
-        case 'ArrowDown':
-          camera.rotateBy(0, -0.05);
-          break;
         case 'r':
         case 'R':
           camera.yaw = -0.62;
@@ -416,6 +463,7 @@ function boot(): void {
     last = now;
 
     sim.advance(dt);
+    applyCameraKeys(dt);
 
     const overlay: Overlay = ui.overlay;
     renderer.render(sim, {

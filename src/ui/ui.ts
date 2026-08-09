@@ -167,7 +167,8 @@ export class UI {
       <label class="gfx-row check"><input type="checkbox" id="gfx-trees" ${g.trees ? 'checked' : ''} /><span>樹木・露岩</span></label>
       <label class="gfx-row check"><input type="checkbox" id="gfx-daynight" ${g.dayNight ? 'checked' : ''} /><span>時刻で日照を変える</span></label>
       <label class="gfx-row check"><input type="checkbox" id="gfx-contour" ${g.contour ? 'checked' : ''} /><span>等高線 (10m)</span></label>
-      <p class="gfx-note">中ドラッグ / Shift+ドラッグ で視点を回転、ホイールでズーム、右ドラッグで移動。R で視点リセット。</p>
+      <p class="gfx-note">移動: 右ドラッグ / W A S D / 矢印キー。回転: 中ドラッグ / Shift+ドラッグ / Shift+方向キー。
+        ズーム: ホイール / PageUp・PageDown。R で視点リセット。</p>
     `;
 
     const quality = document.getElementById('gfx-quality') as HTMLSelectElement;

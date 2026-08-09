@@ -90,21 +90,52 @@ export class Camera {
     this.camera.updateMatrixWorld();
   }
 
-  /** 画面上のドラッグで地図を平行移動 */
+  /**
+   * 画面上の「右」と「上」に対応する水平方向。
+   * カメラは注視点から (cos yaw, *, sin yaw) の向きに離れているので、
+   * 視線 (画面の上) はその逆向き、画面の右は 視線 × 上 になる。
+   */
+  private basis(right: THREE.Vector3, forward: THREE.Vector3): void {
+    forward.set(-Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    right.set(-forward.z, 0, forward.x);
+  }
+
+  private bRight = new THREE.Vector3();
+  private bForward = new THREE.Vector3();
+
+  /**
+   * 画面上のドラッグで地図を平行移動。
+   * 「掴んだ地面がカーソルについてくる」ように、注視点はドラッグと逆へ動かす。
+   */
   pan(dxPixels: number, dyPixels: number): void {
     const perPixel = (2 * this.distance * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) / this.viewH;
-    const forward = new THREE.Vector3(-Math.cos(this.yaw), 0, -Math.sin(this.yaw)).normalize();
-    const right = new THREE.Vector3(forward.z, 0, -forward.x);
-    this.target.addScaledVector(right, -dxPixels * perPixel);
-    this.target.addScaledVector(forward, -dyPixels * perPixel);
+    this.basis(this.bRight, this.bForward);
+    this.target.addScaledVector(this.bRight, -dxPixels * perPixel);
+    this.target.addScaledVector(this.bForward, dyPixels * perPixel);
     this.clampTarget();
     this.update();
   }
 
-  /** 方位角・仰角 */
+  /** キーボード用: 画面の右方向・奥方向へメートル単位で動かす */
+  moveBy(right: number, forward: number): void {
+    if (right === 0 && forward === 0) return;
+    this.basis(this.bRight, this.bForward);
+    this.target.addScaledVector(this.bRight, right);
+    this.target.addScaledVector(this.bForward, forward);
+    this.clampTarget();
+    this.update();
+  }
+
+  /** 方位角・仰角 (three の OrbitControls と同じ向き) */
   orbit(dxPixels: number, dyPixels: number): void {
     this.yaw += dxPixels * 0.005;
-    this.pitch = clamp(this.pitch - dyPixels * 0.004, 0.13, 1.45);
+    this.pitch = clamp(this.pitch + dyPixels * 0.004, 0.13, 1.45);
+    this.update();
+  }
+
+  /** キーボード用のズーム (factor > 1 で寄る) */
+  zoomBy(factor: number): void {
+    this.distance = clamp(this.distance / factor, this.minDistance, this.maxDistance);
     this.update();
   }
 
