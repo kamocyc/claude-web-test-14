@@ -8,6 +8,9 @@ Cities: Skylines のようにセル単位で水が流れ、Timberborn のよう�
 地形・水面・施設・植生はすべて実行時に手続き的に生成していて、外部の 3D モデルや
 テクスチャは一切持っていない。
 
+**▶ ブラウザで遊ぶ: https://kamocyc.github.io/claude-web-test-14/**
+(`main` へ push すると GitHub Actions がビルドして自動で更新される。WebGL2 が必要)
+
 ```bash
 npm install
 npm run dev        # http://localhost:5173
@@ -326,6 +329,7 @@ src/
   ui/       ui.ts                   HUD・ツールバー・インスペクタ
 tools/      autoplay, campaign      自動プレイヤーと検証スクリプト
 tests/                              地形・水理・灌漑・気象・統合・ゲームプレイ・セーブ
+.github/workflows/pages.yml         main への push で GitHub Pages へ自動デプロイ
 ```
 
 グリッドはすべて `Float32Array` に平坦化して保持している (192×192 = 36,864 セル)。
