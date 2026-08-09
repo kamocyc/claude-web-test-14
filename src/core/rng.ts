@@ -51,6 +51,21 @@ export function hashSeed(str: string): number {
   return h >>> 0;
 }
 
+/**
+ * ユーザが入力したシード (URL や入力欄) を 32bit の数値シードにする。
+ * 数字ならそのまま、それ以外は文字列として潰す。空ならランダム。
+ */
+export function parseSeed(text: string | null | undefined): number {
+  const t = (text ?? '').trim();
+  if (!t) return randomSeed();
+  return /^\d+$/.test(t) ? Number(t) >>> 0 : hashSeed(t);
+}
+
+/** 新しい流域用のランダムなシード */
+export function randomSeed(): number {
+  return (Math.random() * 0xffffffff) >>> 0;
+}
+
 /** 座標と塩から決定論的な [0,1) を得る (予報など「未来を先読み」する用途) */
 export function hash01(a: number, b: number, salt = 0): number {
   let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ Math.imul(salt | 0, 0x9e3779b9);

@@ -1,5 +1,5 @@
 import { SPEEDS } from './config';
-import { hashSeed } from './core/rng';
+import { parseSeed, randomSeed } from './core/rng';
 import { Camera } from './render/camera';
 import { DEFAULT_GRAPHICS, Renderer, type GraphicsSettings, type Overlay } from './render/renderer';
 import { BUILDINGS, type BuildingKind } from './sim/buildings';
@@ -18,12 +18,17 @@ import { UI } from './ui/ui';
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const minimap = document.getElementById('minimap') as HTMLCanvasElement;
 
-/** URL の ?seed= で世界を固定できる */
+/** URL の ?seed= で世界を固定できる (なければランダム) */
 function readSeed(): number {
-  const p = new URLSearchParams(location.search);
-  const s = p.get('seed');
-  if (s) return /^\d+$/.test(s) ? Number(s) : hashSeed(s);
-  return (Math.random() * 0xffffffff) >>> 0;
+  const s = new URLSearchParams(location.search).get('seed');
+  return s ? parseSeed(s) : randomSeed();
+}
+
+/** リロードしても同じ流域が出るように、URL のシードを書き換えておく */
+function writeSeedToUrl(seed: number): void {
+  const url = new URL(location.href);
+  url.searchParams.set('seed', String(seed));
+  history.replaceState(null, '', url);
 }
 
 const GFX_KEY = 'hydropolis.graphics.v1';
@@ -102,6 +107,7 @@ function boot(): void {
         'info',
       );
     },
+    onRegenerate: (text) => void regenerateWorld(text),
     onBulldoze: (b) => {
       const r = sim.bulldoze(b.x, b.y);
       sim.damage.info(r.message, sim.weather.day, sim.weather.hour, r.ok ? 'good' : 'warn');
@@ -140,16 +146,57 @@ function boot(): void {
     }
 
     // 河口付近 (南) の平野を初期表示にする
-    camera.centerOn(sim.world.w * 0.5, sim.world.h * 0.68);
+    // (注視点の高さは距離に応じて平均する範囲が変わるので、先に距離を決める)
     camera.distance = 620;
     camera.pitch = 0.62;
-    camera.update();
+    camera.centerOn(sim.world.w * 0.5, sim.world.h * 0.68);
 
     setupInput();
     exposeDebugHandles();
+    ui.setSeed(seed);
     ui.hideLoading();
     requestAnimationFrame(loop);
   }, 60);
+
+  /* ---------------------------------------------------------------- */
+  /* 流域の作り直し                                                     */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * シードを指定して (null ならランダムに) 流域を作り直す。
+   * 世界まるごと入れ替えるので、セーブの読み込みと同じ手順で描画側も差し替える。
+   */
+  async function regenerateWorld(text: string | null): Promise<void> {
+    if (!sim || !renderer) return;
+    // 建てたものがあるときだけ確認する (まっさらならすぐ作り直してよい)
+    if (sim.world.buildings.size > 0 && !confirm('いまの町は失われます。新しい流域を作りますか？')) {
+      ui.setSeed(sim.seed);
+      return;
+    }
+    const next = text === null ? randomSeed() : parseSeed(text);
+    ui.showLoading('新しい流域を生成しています… (侵食計算中)');
+    await nextPaint();
+    try {
+      const fresh = new Simulation(next);
+      // 遊び方の設定 (資金無制限) は世界をまたいで引き継ぐ
+      fresh.city.unlimited = sim.city.unlimited;
+      sim = fresh;
+      camera.setWorld(sim.world);
+      renderer.setWorld(sim.world, next);
+      renderer.resize();
+      camera.distance = 620;
+      camera.pitch = 0.62;
+      camera.centerOn(sim.world.w * 0.5, sim.world.h * 0.68);
+      ui.reset();
+      ui.setSpeedButtons(sim.speedIndex);
+      ui.setSeed(next);
+      writeSeedToUrl(next);
+      exposeDebugHandles();
+      sim.damage.info(`新しい流域を生成しました (シード ${next})`, sim.weather.day, sim.weather.hour, 'good');
+    } finally {
+      ui.hideLoading();
+    }
+  }
 
   /* ---------------------------------------------------------------- */
   /* セーブデータの読み込み                                             */
@@ -188,6 +235,8 @@ function boot(): void {
       }
       ui.reset();
       ui.setSpeedButtons(sim.speedIndex);
+      ui.setSeed(sim.seed);
+      writeSeedToUrl(sim.seed);
       exposeDebugHandles();
       sim.damage.info(`「${data.label}」を読み込みました`, sim.weather.day, sim.weather.hour, 'good');
     } catch (e) {
@@ -506,6 +555,8 @@ function boot(): void {
 
     sim.advance(dt);
     applyCameraKeys(dt);
+    // 注視点の高さを地形へ滑らかに追従させる (横移動で揺れないように)
+    camera.tick(dt);
 
     const overlay: Overlay = ui.overlay;
     renderer.render(sim, {
