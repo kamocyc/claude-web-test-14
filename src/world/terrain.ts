@@ -42,6 +42,7 @@ function baseHeight(rng: RNG, w: number, h: number): Float32Array {
   const warp = new Perlin(rng);
   const out = new Float32Array(w * h);
   const off = rng.range(0, 500);
+  const axisPhase = rng.range(0, Math.PI * 2);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -59,25 +60,33 @@ function baseHeight(rng: RNG, w: number, h: number): Float32Array {
       const hills = (p.fbm(fx, fy, 7) + 1) * 0.5;
       const ridge = p.ridged(fx * 0.85 + 11.3, fy * 0.85 - 7.1, 5);
 
-      // 北 (y=0) ほど山、南 (y=h) ほど平野 → 河口へ向かう自然な傾斜。
-      // 山地帯を南へ伸ばしてあるのは、川が山の中を流れる区間を長くするため
-      // (平野をだらだら流れるだけだと、谷が広すぎてダムを架ける場所がない)。
-      const mountain = smoothstep(0.2, 0.72, 1 - ny);
-      const plain = smoothstep(0.46, 0.92, ny);
+      // 北 1/3 が山地 (ダムを架ける上流域)、南 2/3 が平野 (人が住む下流域)。
+      //   mountain: ny 0.10 まで満額 → 0.38 でゼロ (その間が山麓)
+      //   plain:    ny 0.28 から立ち上がり 0.52 で満額
+      const mountain = smoothstep(0.62, 0.9, 1 - ny);
+      const plain = smoothstep(0.28, 0.52, ny);
 
-      let v = hills * (0.42 + 0.25 * plain) + ridge * mountain * 1.35;
-      // 全体傾斜 (南へ下る)
-      v -= ny * 0.46;
-      // 平野部は起伏を抑える
-      v = v * (1 - 0.35 * plain);
+      // 起伏 (丘陵 + 山岳の尾根)。平野側では起伏そのものを抑える。
+      const relief = (hills * (0.42 + 0.25 * plain) + ridge * mountain * 1.35) * (1 - 0.55 * plain);
 
-      out[y * w + x] = v;
+      // 谷の軸 — 南北に蛇行する「本流の通り道」。
+      // 南北傾斜だけを強くすると、斜面を平行に流れ落ちる小川が何本も並ぶだけの
+      // 地形になり、「一本の川の流域」に見えなくなる。軸から離れるほど地面を
+      // 持ち上げて、支流が本流へ集まるようにする。
+      const axis = 0.5 + Math.sin(ny * 2.3 + axisPhase) * 0.15 + (warp.fbm(ny * 1.7, off * 0.01, 3) - 0.5) * 0.22;
+      const across = Math.min(1, Math.abs(nx - axis) / 0.46);
+      const valley = Math.pow(across, 1.7) * (0.55 + 0.5 * mountain);
+
+      // 全体傾斜 (南へ下る)。傾斜には平野側の減衰を掛けない
+      // (掛けると南端が持ち上がって、せっかくの傾斜を打ち消す)。
+      out[y * w + x] = relief + valley - ny * 0.78;
     }
   }
 
   normalize(out);
-  // 低地を広く、山を鋭く
-  for (let i = 0; i < out.length; i++) out[i] = Math.pow(out[i], 1.45);
+  // 低地を広く、山を鋭く。南北傾斜を強くしたぶん平野側が 0 付近に潰れるので、
+  // 以前ほどきつく持ち上げない (1.45 だと下流が海面下に沈む)。
+  for (let i = 0; i < out.length; i++) out[i] = Math.pow(out[i], 1.25);
   return out;
 }
 
@@ -114,17 +123,24 @@ function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: numb
   let maxAcc = 0;
   for (let i = 0; i < acc.length; i++) if (acc[i] > maxAcc) maxAcc = acc[i];
 
-  // 山地〜中下流を 3 帯に分け、それぞれで最も水を集めている地点 (= 本流) を選ぶ。
-  // 下流側にも1つ置かないと、支流が合わさって町の水源になった本流を押さえられない。
+  // 狭窄部は**上流域 (北 1/3) の中だけ**に彫る。
+  // 下流は人が住む場所なので、ここに峡谷を作ると氾濫原が潰れ、水位が上がっても
+  // 水は谷の中で深くなるだけになる (堤防にも排水機場にも仕事が無くなる)。
+  // 帯は「山地の出口」= ちょうど 1/3 の境をまたぐ位置に置く。現実のダムサイトと
+  // 同じ場所であるうえ、両側の制約からここしか成り立たない:
+  //   上流に寄せすぎる → 支配できる流域が小さく、かつ**湛水がマップ上端に届く**。
+  //     境界セルは海として排水されるので (hydrology.ts の edge)、端に触れた
+  //     貯水池は水が抜けてしまい、ダムとして成立しない。
+  //   下流に寄せすぎる → 人が住む氾濫原を峡谷が潰す。
   const bands: [number, number][] = [
-    [0.2, 0.34],
-    [0.36, 0.5],
-    [0.52, 0.64],
-    [0.66, 0.78],
+    [0.2, 0.27],
+    [0.27, 0.34],
+    [0.34, 0.41],
   ];
 
-  // 各帯で、離れた 2 本の川筋に彫る。マップは複数の川に分かれて海へ注ぐので、
+  // 各帯で、離れた 3 本の川筋に彫る。マップは複数の川に分かれて海へ注ぐので、
   // いちばん大きい 1 本だけに彫ると、町が別の川沿いに開けたときに適地がなくなる。
+  // 帯を上流に寄せたぶん 1 帯あたりの本数を増やして、適地の総数を維持する。
   const targets: number[] = [];
   for (const [y0, y1] of bands) {
     const from = Math.round(y0 * h);
@@ -133,13 +149,14 @@ function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: numb
     for (let y = from; y < to; y++) {
       for (let x = 6; x < w - 6; x++) {
         const i = y * w + x;
-        if (acc[i] > maxAcc * 0.05) cands.push(i);
+        // 上流ほど集水量が小さいので、下流と同じ閾値では候補が採れない
+        if (acc[i] > maxAcc * 0.025) cands.push(i);
       }
     }
     cands.sort((a, b) => acc[b] - acc[a]);
     const picked: number[] = [];
     for (const i of cands) {
-      if (picked.length >= 2) break;
+      if (picked.length >= 3) break;
       const ix = i % w;
       const iy = (i / w) | 0;
       // 既に選んだ地点と近すぎるものは同じ川筋なので飛ばす
@@ -155,7 +172,11 @@ function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: numb
     // 「塞ぐのに要する径間数の半分」になる。
     const floor = rng.range(1.3, 2.0); // 谷底の半幅
     const rise = rng.range(1.4, 2.2); // 壁が立ち上がるまでの距離
-    const half = rng.int(6) + 9; // 川に沿った長さ (片側のセル数)
+    // 川に沿った長さ (片側のセル数)。
+    // ここは**背水長より長く**なければならない。上流域の河床勾配は約 0.53m/セル
+    // なので 16m の堰がつくる背水は約 30 セル伸びる。峡谷がそれより短いと、
+    // 貯水池の上流端が壁の外へはみ出し、そこから水が横へ逃げてダムが成立しない。
+    const half = rng.int(10) + 22;
     // 壁の高さは「河床から見て堰 (16m) より確実に高い」値に決め打ちする。
     // 元の地形へ一定量を足すやり方だと、もともと低い所では堰を越えられず谷が閉じない。
     const wallH = rng.range(21, 30); // 河床からの壁の高さ (m)
@@ -206,7 +227,12 @@ function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: numb
     }
 
     // --- 川筋からの距離で壁を立てる ---
-    const reach = Math.ceil(floor + rise + 5);
+    // 壁は「河道沿いの細い縁」では足りない。縁だけだと、堰でせき止めた水が
+    // 縁の外側 (= 隣の支流の谷) へ乗り越えて、そのまま下流の平野へ抜けてしまう。
+    // 峡谷を囲む**山塊**になるまで広げて、周りの分水嶺ごと持ち上げる。
+    const flank = 14; // 満高で保つ幅 (セル)
+    const fade = 8; // そこから自然地形へ戻すまでの幅 (セル)
+    const reach = Math.ceil(floor + rise + flank + fade);
     let left = w;
     let right = 0;
     let top = h;
@@ -243,11 +269,18 @@ function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: numb
         // 窪地解消で谷が平らな湖になってしまう。
         if (acc[y * w + x] > RIVER_THRESHOLD * 0.5) continue;
         const dist = Math.sqrt(dist2);
-        const wall = smoothstep(floor, floor + rise, dist);
-        if (wall <= 0) continue;
-        // 峡谷の前後はなだらかに戻す (急に壁が終わると不自然)
-        const t = (at - mid) / (path.length * 0.5 + 1);
-        const env = Math.exp(-t * t * 1.6);
+        // 立ち上がったあと、外側でまた自然地形へ戻す**帯**にする。
+        // 立ち上げっぱなしにすると、走査した矩形いっぱいが河床+wallH の
+        // 台地になってしまい、真上から見て長方形のブロックとして露出する。
+        const inner = smoothstep(floor, floor + rise, dist);
+        const outer = 1 - smoothstep(floor + rise + flank, floor + rise + flank + fade, dist);
+        const wall = inner * outer;
+        if (wall <= 0.02) continue;
+        // 峡谷の前後はなだらかに戻す (急に壁が終わると不自然)。
+        // ただし中央付近は満高で保つ — ガウス減衰だと壁が中央以外で低くなり、
+        // 貯水池の上流端がそこを越えて溢れてしまう。
+        const t = Math.abs((at - mid) / (path.length * 0.5 + 1));
+        const env = 1 - smoothstep(0.55, 1, t);
         if (env < 0.05) continue;
         // 一様な壁に見えないよう、ゆるやかな凹凸をつける
         const rough = 1 + 0.16 * Math.sin(x * 0.63 + y * 0.41) + 0.09 * Math.sin(y * 0.27 - x * 0.19);
@@ -257,6 +290,94 @@ function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: numb
         // 持ち上げるだけ。もともと高い尾根を削ってしまわない
         if (want > field[y * w + x]) field[y * w + x] = want;
       }
+    }
+  }
+}
+
+/**
+ * 下流域 (南 2/3) に**氾濫原 — 幅の広い平らな谷底**を彫る。
+ *
+ * `sculptGorges` と対になる処理。これが無いと、水位が上がっても水は谷の中で
+ * 深くなるだけで横に広がらない。実測では日雨量 720mm でも浸水は陸地の 3.8% に
+ * とどまり、そのかわり水深が 9.5m に達していた — 峡谷の底が深くなっても、
+ * 段丘の上の町には何も起きないので、堤防にも排水機場にも仕事が生まれない。
+ *
+ * 実際の沖積河川と同じく、**下流ほど (集める水が多いほど) 谷底を広く**取る。
+ * 川筋からの距離で目標高さを決め、**下げる方向にだけ**適用する
+ * (持ち上げると意図しない堰ができて、その裏に水が溜まってしまう)。
+ */
+function carveFloodplain(field: Float32Array, acc: Float32Array, w: number, h: number): void {
+  const n = w * h;
+  let maxAcc = 0;
+  for (let i = 0; i < n; i++) if (acc[i] > maxAcc) maxAcc = acc[i];
+  const logSpan = Math.log(Math.max(2, maxAcc / RIVER_THRESHOLD));
+
+  /**
+   * その行が氾濫原になる度合い (山地では 0)。狭窄部の帯 (〜0.41) には掛からない。
+   *
+   * 帯をこれ以上上流へ寄せると、ダムが支配できる流域が 20% → 8% に落ちる
+   * (集水する前の細い沢を塞いでも、下流の町は守れない)。山地の出口に置くのが
+   * いちばん効く、という現実のダムと同じ結論になる。
+   */
+  const zoneAt = (y: number): number => smoothstep(0.44, 0.6, y / h);
+
+  // --- 河道までの距離と「いちばん近い河道セル」をチャンファー距離で求める ---
+  const D1 = 1;
+  const D2 = Math.SQRT2;
+  const dist = new Float32Array(n).fill(Infinity);
+  const near = new Int32Array(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    if (acc[i] > RIVER_THRESHOLD && zoneAt((i / w) | 0) > 0) {
+      dist[i] = 0;
+      near[i] = i;
+    }
+  }
+  const relax = (i: number, j: number, cost: number): void => {
+    const d = dist[j] + cost;
+    if (d < dist[i]) {
+      dist[i] = d;
+      near[i] = near[j];
+    }
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (y > 0) {
+        relax(i, i - w, D1);
+        if (x > 0) relax(i, i - w - 1, D2);
+        if (x < w - 1) relax(i, i - w + 1, D2);
+      }
+      if (x > 0) relax(i, i - 1, D1);
+    }
+  }
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      if (y < h - 1) {
+        relax(i, i + w, D1);
+        if (x < w - 1) relax(i, i + w + 1, D2);
+        if (x > 0) relax(i, i + w - 1, D2);
+      }
+      if (x < w - 1) relax(i, i + 1, D1);
+    }
+  }
+
+  // --- 目標高さまで下げる ---
+  for (let y = 0; y < h; y++) {
+    const zone = zoneAt(y);
+    if (zone <= 0) continue;
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const src = near[i];
+      if (src < 0) continue;
+      // 集水量が多い川ほど谷底を広く、氾濫原の面も高く取る (= 満杯まで深い)
+      const mag = clamp(Math.log(Math.max(1, acc[src] / RIVER_THRESHOLD)) / logSpan, 0, 1);
+      const half = 5 + 20 * mag; // 谷底の半幅 (セル) — 本流で約 300m
+      const rise = 1.6 + 1.2 * mag; // 河床から氾濫原の面までの高さ (m)
+      // 谷底の外側は 1.1m/セル で自然地形へ戻す
+      const target = field[src] + rise + Math.max(0, dist[i] - half) * 1.1;
+      if (target >= field[i]) continue; // 下げるときだけ触る
+      field[i] += (target - field[i]) * zone;
     }
   }
 }
@@ -280,7 +401,9 @@ function normalize(a: Float32Array): void {
 /** 正規化された地形をメートルへ変換し、南端を海へ落とす */
 function toMeters(field: Float32Array, w: number, h: number): Float32Array {
   const out = new Float32Array(field.length);
-  for (let i = 0; i < field.length; i++) out[i] = field[i] * 122 - 4;
+  // 下駄 (+6m) を履かせて、平野の南端でも陸地が残るようにする。海は下の
+  // `coast` 行で明示的に作るので、内陸に海面下の土地を作る必要はない。
+  for (let i = 0; i < field.length; i++) out[i] = field[i] * 112 + 6;
 
   const coast = 9;
   for (let y = h - coast; y < h; y++) {
@@ -610,7 +733,10 @@ export function generateTerrain(seed: number, w = MAP, h = MAP, quality = 1): Te
   //    侵食や河道掘削のあとに彫るのは、それらが川筋を動かしてしまうため。
   //    先に彫ると、せっかくの峡谷の外を川が流れることになる。
   sculptGorges(height, acc, w, h, rng);
-  resolveDepressions(height, w, h); // 壁の裏に窪地ができていたら解消する
+  // 5. 下流域には逆に、幅の広い平らな氾濫原を彫る (狭窄部と対になる処理)。
+  //    上流で水を止め、下流で水を広げる — これで治水施設に仕事が生まれる。
+  carveFloodplain(height, acc, w, h);
+  resolveDepressions(height, w, h); // 壁の裏や氾濫原に窪地ができていたら解消する
   acc = computeFlowAccumulation(height, w, h);
 
   let maxHeight = -Infinity;
