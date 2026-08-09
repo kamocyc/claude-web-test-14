@@ -295,7 +295,9 @@ function boot(): void {
   }
 
   function setupInput(): void {
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // 右ドラッグを地図移動に使うので、ブラウザの右クリックメニューは
+    // キャンバスだけでなく UI パネルの上でも出さない
+    document.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);

@@ -22,11 +22,17 @@ function flatTerrain(w: number, h: number, fn: (x: number, y: number) => number)
   };
 }
 
-/** 川の近くで、指定した施設を建てられるセルを探す */
+/**
+ * 川の近くで、指定した施設を建てられるセルを探す。
+ * `alsoFits` を渡すと「隣にその施設も建てられる」場所だけを返す。
+ * (山あいの峡谷は取水はできても浄水場を置く平地がないので、上水道一式を
+ *  組む試験では、まとめて置ける場所を選ぶ必要がある)
+ */
 function findSpot(
   sim: Simulation,
   kind: Parameters<Simulation['build']>[0],
   near?: { x: number; y: number; r: number },
+  alsoFits?: Parameters<Simulation['build']>[0],
 ): { x: number; y: number } | null {
   const w = sim.world;
   const x0 = near ? Math.max(1, near.x - near.r) : 1;
@@ -35,7 +41,19 @@ function findSpot(
   const y1 = near ? Math.min(w.h - 2, near.y + near.r) : w.h - 2;
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      if (w.canPlace(kind, x, y).ok) return { x, y };
+      if (!w.canPlace(kind, x, y).ok) continue;
+      if (alsoFits) {
+        // まわりが開けている (4 近傍のうち 3 方向以上に置ける) 場所だけを選ぶ。
+        // 峡谷の岸のように 1 方向しか空いていないと、この先の連鎖が続かない。
+        const room = [
+          [1, 0],
+          [0, 1],
+          [-1, 0],
+          [0, -1],
+        ].filter(([dx, dy]) => w.canPlace(alsoFits, x + dx, y + dy).ok).length;
+        if (room < 3) continue;
+      }
+      return { x, y };
     }
   }
   return null;
@@ -46,8 +64,8 @@ describe('上水道のチェーン', () => {
     const sim = new Simulation(4242, 0.12);
     sim.city.money = 500000;
 
-    // 川に隣接した取水地点を探す
-    const intake = findSpot(sim, 'intake');
+    // 川に隣接し、かつ隣に浄水場を置ける (急斜面でない) 取水地点を探す
+    const intake = findSpot(sim, 'intake', undefined, 'treatment');
     expect(intake).not.toBeNull();
     if (!intake) return;
     expect(sim.build('intake', intake.x, intake.y).ok).toBe(true);

@@ -541,6 +541,9 @@ export function findDamSite(w: World, from: { x: number; y: number }): DamSite |
     const p = path[k];
     const acc = w.flowAcc[w.idx(p.x, p.y)];
     if (acc < minAcc) continue;
+    // 実際に水が流れている地点に限る。flowAcc は「降った雨が全部流れたら」の
+    // 集水量なので、涸れ沢にも大きな値が出る。そこに架けても何も貯まらない。
+    if (w.water[w.idx(p.x, p.y)] < 0.15) continue;
     for (const abutment of [12, 10, 8, 6, 5]) {
       const span = damSpanLength(w, p.x, p.y, abutment);
       if (span <= 0 || span > DAM_MAX_SPAN) continue;

@@ -548,6 +548,8 @@ export class UI {
   }
 
   clearSelection(): void {
+    this.inspKey = '';
+    this.gateDragging = false;
     this.selected = null;
     this.selectedCell = null;
     this.el['inspector'].classList.add('hidden');
@@ -560,6 +562,9 @@ export class UI {
   private bar(v: number, color = 'var(--accent)'): string {
     return `<div class="bar"><i style="width:${clamp(v, 0, 1) * 100}%;background:${color}"></i></div>`;
   }
+
+  /** いまインスペクタに出している対象 (これが変わったときだけ DOM を作り直す) */
+  private inspKey = '';
 
   private renderInspector(sim: Simulation): void {
     const b = this.selected;
@@ -584,12 +589,8 @@ export class UI {
       case 'floodgate': {
         html += this.row('堰高', `${def.wallHeight} m`);
         html += this.row('有効天端', `${w.solid[i].toFixed(1)} m`);
+        html += this.row('ゲート開度', `${Math.round(b.gate * 100)}%`);
         if (b.kind === 'dam') html += this.row('発電収入', `￥${b.rate.toFixed(1)}/h`);
-        html += `<div class="gate-row">
-            <label><span>ゲート開度</span><span id="gate-val">${Math.round(b.gate * 100)}%</span></label>
-            <input type="range" min="0" max="100" value="${Math.round(b.gate * 100)}" id="gate-slider" />
-          </div>
-          <p class="insp-note">開けると下流へ流す (洪水前に空けておく)。閉めると貯めるが、満水を超えて越流すると決壊の危険。</p>`;
         break;
       }
       case 'levee':
@@ -639,23 +640,86 @@ export class UI {
     }
 
     html += `<p class="insp-note">${def.desc}</p>`;
-    const body = this.el['insp-body'];
-    body.innerHTML = html;
 
-    const slider = document.getElementById('gate-slider') as HTMLInputElement | null;
-    if (slider) {
-      slider.addEventListener('input', () => {
-        const v = Number(slider.value) / 100;
-        this.cb.onGate(b, v);
-        const label = document.getElementById('gate-val');
-        if (label) label.textContent = `${Math.round(v * 100)}%`;
-      });
+    // 数値は毎フレーム書き換わるが、操作部 (スライダー) を作り直すと
+    // ドラッグ中に要素が消えて掴めなくなる。対象が変わったときだけ組み立て、
+    // 以降は数値部分だけ差し替える。
+    const key = `${b.id}:${b.kind}`;
+    if (key !== this.inspKey) {
+      this.inspKey = key;
+      this.el['insp-body'].innerHTML = `<div id="insp-stats"></div><div id="insp-ctl"></div>`;
+      if (def.hasGate) this.buildGateControl();
     }
+    const stats = document.getElementById('insp-stats');
+    if (stats) stats.innerHTML = html;
+    if (def.hasGate) this.syncGateControl(b.gate);
+  }
+
+  /** ゲート操作 UI を1度だけ組み立てる */
+  private buildGateControl(): void {
+    const host = document.getElementById('insp-ctl');
+    if (!host) return;
+    host.innerHTML = `
+      <div class="gate-row">
+        <label><span>ゲート開度</span><span id="gate-val">0%</span></label>
+        <input type="range" min="0" max="100" step="1" value="0" id="gate-slider" />
+        <div class="gate-buttons">
+          <button data-gate="0">全閉</button>
+          <button data-gate="25">25%</button>
+          <button data-gate="50">50%</button>
+          <button data-gate="100">全開</button>
+        </div>
+      </div>
+      <p class="insp-note">開けると下流へ流す (洪水前に空けておく)。閉めると貯めるが、満水を超えて越流すると決壊の危険。</p>`;
+
+    const slider = document.getElementById('gate-slider') as HTMLInputElement;
+    const apply = (v: number): void => {
+      const target = this.selected;
+      if (!target) return;
+      this.cb.onGate(target, clamp(v, 0, 1));
+      const label = document.getElementById('gate-val');
+      if (label) label.textContent = `${Math.round(v * 100)}%`;
+    };
+    slider.addEventListener('pointerdown', () => {
+      this.gateDragging = true;
+    });
+    const stop = (): void => {
+      this.gateDragging = false;
+    };
+    slider.addEventListener('pointerup', stop);
+    slider.addEventListener('pointercancel', stop);
+    slider.addEventListener('blur', stop);
+    slider.addEventListener('input', () => apply(Number(slider.value) / 100));
+    slider.addEventListener('change', () => {
+      apply(Number(slider.value) / 100);
+      stop();
+    });
+    host.querySelectorAll<HTMLButtonElement>('.gate-buttons button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const v = Number(btn.dataset.gate) / 100;
+        slider.value = String(Math.round(v * 100));
+        apply(v);
+      });
+    });
+  }
+
+  /** つまみを動かしている最中は、シミュレーション側の値で上書きしない */
+  private gateDragging = false;
+
+  private syncGateControl(gate: number): void {
+    if (this.gateDragging) return;
+    const slider = document.getElementById('gate-slider') as HTMLInputElement | null;
+    const label = document.getElementById('gate-val');
+    if (!slider) return;
+    const v = Math.round(clamp(gate, 0, 1) * 100);
+    if (Number(slider.value) !== v) slider.value = String(v);
+    if (label) label.textContent = `${v}%`;
   }
 
   private renderCellInspector(sim: Simulation, x: number, y: number): void {
     const w = sim.world;
     if (!w.inBounds(x, y)) return;
+    this.inspKey = '';
     const i = w.idx(x, y);
     this.el['insp-title'].textContent = `地点 (${x}, ${y})`;
     const speed = Math.hypot(w.vx[i], w.vy[i]);

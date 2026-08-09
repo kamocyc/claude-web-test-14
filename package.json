@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "campaign": "vite-node tools/campaign.ts",
-    "dam-effect": "vite-node tools/dam-effect.ts"
+    "dam-effect": "vite-node tools/dam-effect.ts",
+    "dam-sites": "vite-node tools/dam-sites.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

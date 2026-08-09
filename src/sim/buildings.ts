@@ -130,10 +130,12 @@ export const BUILDINGS: Record<BuildingKind, BuildingDef> = {
     needsWater: true,
     maxSlope: 2.4,
     network: true,
-    floodTolerance: 4.0,
+    // 川の中に据える構造物なので、水没しても壊れない。
+    // (山あいの狭窄部では出水時に水深が 5〜8m に達する)
+    floodTolerance: 9.0,
     color: '#3f9bd6',
     label: '取',
-    desc: '河川から原水を取水する。川が涸れると取水できない。',
+    desc: '河川から原水を取水する。水没しても壊れないが、川が涸れると取水できない。',
     drag: false,
   },
   treatment: {

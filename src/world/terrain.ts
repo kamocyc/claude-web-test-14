@@ -59,11 +59,13 @@ function baseHeight(rng: RNG, w: number, h: number): Float32Array {
       const hills = (p.fbm(fx, fy, 7) + 1) * 0.5;
       const ridge = p.ridged(fx * 0.85 + 11.3, fy * 0.85 - 7.1, 5);
 
-      // 北 (y=0) ほど山、南 (y=h) ほど平野 → 河口へ向かう自然な傾斜
-      const mountain = smoothstep(0.12, 0.92, 1 - ny);
-      const plain = smoothstep(0.0, 0.55, ny);
+      // 北 (y=0) ほど山、南 (y=h) ほど平野 → 河口へ向かう自然な傾斜。
+      // 山地帯を南へ伸ばしてあるのは、川が山の中を流れる区間を長くするため
+      // (平野をだらだら流れるだけだと、谷が広すぎてダムを架ける場所がない)。
+      const mountain = smoothstep(0.2, 0.72, 1 - ny);
+      const plain = smoothstep(0.46, 0.92, ny);
 
-      let v = hills * (0.42 + 0.25 * plain) + ridge * mountain * 1.25;
+      let v = hills * (0.42 + 0.25 * plain) + ridge * mountain * 1.35;
       // 全体傾斜 (南へ下る)
       v -= ny * 0.46;
       // 平野部は起伏を抑える
@@ -77,6 +79,186 @@ function baseHeight(rng: RNG, w: number, h: number): Float32Array {
   // 低地を広く、山を鋭く
   for (let i = 0; i < out.length; i++) out[i] = Math.pow(out[i], 1.45);
   return out;
+}
+
+/**
+ * 本流の山あい区間に**狭窄部 (ゴルジュ) を彫る**。
+ *
+ * 川筋そのものには触らず、川から数セル離れたところの両岸だけを持ち上げる。
+ * すると「川幅は変わらないのに両岸が切り立った」峡谷ができる — 山地を横切る川が
+ * 硬い岩盤を穿ってつくる地形と同じで、ここがダムの適地になる。
+ * 狭いので少ない径間で塞げ、上流側は谷が広いのでよく貯まる。
+ *
+ * 侵食が終わって「どこが川か」が確定してから彫り、そのあと軽く侵食をかけ直すので、
+ * 定規で引いたような壁にはならない。
+ *
+ * @param field 0..1 に正規化された高さ場
+ * @param acc   侵食後の流域面積 (どこが本流かを知るために使う)
+ */
+/**
+ * 本流の山あい区間に**狭窄部 (ゴルジュ) を彫る**。
+ *
+ * 川筋そのものには触らず、川から数セル離れた両岸だけを持ち上げる。すると
+ * 「川幅は変わらないのに両岸が切り立った」峡谷ができる — 山地を横切る川が硬い岩盤を
+ * 穿ってつくる地形と同じで、ここがダムの適地になる。狭いので少ない径間で塞げ、
+ * 上流側は谷が広いのでよく貯まる。
+ *
+ * 壁の高さは「川筋からの距離」で決める。直線ではなく**実際の流路をたどる**ので、
+ * 川が曲がっていても両岸が途切れない。侵食が終わって流路が確定してから彫り、
+ * そのあと軽く侵食をかけ直すので、定規で引いたような壁にはならない。
+ *
+ * @param field 標高 (m)
+ * @param acc   確定した流域面積 (どこが本流かを知るために使う)
+ */
+function sculptGorges(field: Float32Array, acc: Float32Array, w: number, h: number, rng: RNG): void {
+  let maxAcc = 0;
+  for (let i = 0; i < acc.length; i++) if (acc[i] > maxAcc) maxAcc = acc[i];
+
+  // 山地〜中下流を 3 帯に分け、それぞれで最も水を集めている地点 (= 本流) を選ぶ。
+  // 下流側にも1つ置かないと、支流が合わさって町の水源になった本流を押さえられない。
+  const bands: [number, number][] = [
+    [0.2, 0.34],
+    [0.36, 0.5],
+    [0.52, 0.64],
+    [0.66, 0.78],
+  ];
+
+  // 各帯で、離れた 2 本の川筋に彫る。マップは複数の川に分かれて海へ注ぐので、
+  // いちばん大きい 1 本だけに彫ると、町が別の川沿いに開けたときに適地がなくなる。
+  const targets: number[] = [];
+  for (const [y0, y1] of bands) {
+    const from = Math.round(y0 * h);
+    const to = Math.round(y1 * h);
+    const cands: number[] = [];
+    for (let y = from; y < to; y++) {
+      for (let x = 6; x < w - 6; x++) {
+        const i = y * w + x;
+        if (acc[i] > maxAcc * 0.05) cands.push(i);
+      }
+    }
+    cands.sort((a, b) => acc[b] - acc[a]);
+    const picked: number[] = [];
+    for (const i of cands) {
+      if (picked.length >= 2) break;
+      const ix = i % w;
+      const iy = (i / w) | 0;
+      // 既に選んだ地点と近すぎるものは同じ川筋なので飛ばす
+      const far = picked.every((j) => Math.hypot((j % w) - ix, ((j / w) | 0) - iy) > 30);
+      if (far) picked.push(i);
+    }
+    targets.push(...picked);
+  }
+
+  for (const best of targets) {
+
+    // 峡谷の寸法 (セル)。谷底の半幅 + 壁の立ち上がりが、そのまま
+    // 「塞ぐのに要する径間数の半分」になる。
+    const floor = rng.range(1.3, 2.0); // 谷底の半幅
+    const rise = rng.range(1.4, 2.2); // 壁が立ち上がるまでの距離
+    const half = rng.int(6) + 9; // 川に沿った長さ (片側のセル数)
+    // 壁の高さは「河床から見て堰 (16m) より確実に高い」値に決め打ちする。
+    // 元の地形へ一定量を足すやり方だと、もともと低い所では堰を越えられず谷が閉じない。
+    const wallH = rng.range(21, 30); // 河床からの壁の高さ (m)
+
+    // --- 川筋をたどる (上流へ acc の大きい方、下流へ最急降下) ---
+    const path: number[] = [best];
+    let cur = best;
+    for (let s = 0; s < half; s++) {
+      const cx = cur % w;
+      const cy = (cur / w) | 0;
+      let next = -1;
+      let bestA = 0;
+      for (let k = 0; k < 8; k++) {
+        const nx = cx + NX8[k];
+        const ny = cy + NY8[k];
+        if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+        const j = ny * w + nx;
+        if (field[j] <= field[cur]) continue; // 上流 = 高い方
+        if (acc[j] > bestA) {
+          bestA = acc[j];
+          next = j;
+        }
+      }
+      if (next < 0) break;
+      path.unshift(next);
+      cur = next;
+    }
+    cur = best;
+    for (let s = 0; s < half; s++) {
+      const cx = cur % w;
+      const cy = (cur / w) | 0;
+      let next = -1;
+      let drop = 0;
+      for (let k = 0; k < 8; k++) {
+        const nx = cx + NX8[k];
+        const ny = cy + NY8[k];
+        if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+        const j = ny * w + nx;
+        const d = field[cur] - field[j];
+        if (d > drop) {
+          drop = d;
+          next = j;
+        }
+      }
+      if (next < 0) break;
+      path.push(next);
+      cur = next;
+    }
+
+    // --- 川筋からの距離で壁を立てる ---
+    const reach = Math.ceil(floor + rise + 5);
+    let left = w;
+    let right = 0;
+    let top = h;
+    let bottom = 0;
+    for (const j of path) {
+      const jx = j % w;
+      const jy = (j / w) | 0;
+      left = Math.min(left, jx);
+      right = Math.max(right, jx);
+      top = Math.min(top, jy);
+      bottom = Math.max(bottom, jy);
+    }
+    left = Math.max(0, left - reach);
+    right = Math.min(w - 1, right + reach);
+    top = Math.max(0, top - reach);
+    bottom = Math.min(h - 1, bottom + reach);
+
+    const mid = path.indexOf(best);
+    for (let y = top; y <= bottom; y++) {
+      for (let x = left; x <= right; x++) {
+        // いちばん近い川筋セルまでの距離と、そのセルの川沿い位置を求める
+        let dist2 = Infinity;
+        let at = 0;
+        for (let s = 0; s < path.length; s++) {
+          const jx = path[s] % w;
+          const jy = (path[s] / w) | 0;
+          const d2 = (x - jx) * (x - jx) + (y - jy) * (y - jy);
+          if (d2 < dist2) {
+            dist2 = d2;
+            at = s;
+          }
+        }
+        // 川そのもの (本流も支流も) は絶対に埋めない。埋めると水の出口がなくなり、
+        // 窪地解消で谷が平らな湖になってしまう。
+        if (acc[y * w + x] > RIVER_THRESHOLD * 0.5) continue;
+        const dist = Math.sqrt(dist2);
+        const wall = smoothstep(floor, floor + rise, dist);
+        if (wall <= 0) continue;
+        // 峡谷の前後はなだらかに戻す (急に壁が終わると不自然)
+        const t = (at - mid) / (path.length * 0.5 + 1);
+        const env = Math.exp(-t * t * 1.6);
+        if (env < 0.05) continue;
+        // 一様な壁に見えないよう、ゆるやかな凹凸をつける
+        const rough = 1 + 0.16 * Math.sin(x * 0.63 + y * 0.41) + 0.09 * Math.sin(y * 0.27 - x * 0.19);
+        // 「いちばん近い川筋セルの河床」を基準にするので、壁は川と一緒に下っていく
+        const bed = field[path[at]];
+        const want = bed + wall * env * wallH * rough;
+        // 持ち上げるだけ。もともと高い尾根を削ってしまわない
+        if (want > field[y * w + x]) field[y * w + x] = want;
+      }
+    }
+  }
 }
 
 /** [0,1] に正規化する */
@@ -395,9 +577,11 @@ function carveChannels(hm: Float32Array, acc: Float32Array, w: number, h: number
     const mag = Math.log(acc[i] / RIVER_THRESHOLD);
     carve[i] = Math.min(9.5, 1.15 + mag * 1.55);
   }
+  // 掘り込みを広げすぎると谷底が幅広くなり、堰を架けられる狭窄部がなくなる。
+  // 河道そのものは深く、周囲へのならしは控えめにする。
   const wide = boxBlur(boxBlur(carve, w, h, 1), w, h, 2);
   for (let i = 0; i < hm.length; i++) {
-    hm[i] -= Math.max(carve[i] * 0.55, wide[i] * 1.15);
+    hm[i] -= Math.max(carve[i] * 0.82, wide[i] * 0.7);
   }
 }
 
@@ -413,12 +597,20 @@ export function generateTerrain(seed: number, w = MAP, h = MAP, quality = 1): Te
   const droplets = Math.round(((90000 * (w * h)) / (192 * 192)) * quality);
   erode(field, w, h, rng, { droplets });
   normalize(field);
+
   const height = toMeters(field, w, h);
 
   resolveDepressions(height, w, h);
   let acc = computeFlowAccumulation(height, w, h);
   carveChannels(height, acc, w, h);
   resolveDepressions(height, w, h);
+  acc = computeFlowAccumulation(height, w, h);
+
+  // 4. 流路が確定してから、山あい区間に狭窄部を彫る (= 峡谷 / ダムの適地)。
+  //    侵食や河道掘削のあとに彫るのは、それらが川筋を動かしてしまうため。
+  //    先に彫ると、せっかくの峡谷の外を川が流れることになる。
+  sculptGorges(height, acc, w, h, rng);
+  resolveDepressions(height, w, h); // 壁の裏に窪地ができていたら解消する
   acc = computeFlowAccumulation(height, w, h);
 
   let maxHeight = -Infinity;

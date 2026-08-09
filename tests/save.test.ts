@@ -90,7 +90,10 @@ describe('セーブ / ロード', () => {
     }
     // 同じ地形・同じ気象なので、その後の展開もほぼ一致する
     expect(sim2.snapshot.inflow).toBeCloseTo(sim.snapshot.inflow, 2);
-    expect(sim2.world.totalWater()).toBeCloseTo(sim.world.totalWater(), -2);
+    // 水深はセーブ時に Uint16 (m×3000) へ量子化されるので、総量はぴったりには戻らない。
+    // 誤差は「量子化幅 × セル数」で決まるため、絶対値ではなく相対で見る。
+    const water = sim.world.totalWater();
+    expect(Math.abs(sim2.world.totalWater() - water) / water).toBeLessThan(1e-4);
     expect(sim2.hydro.sanityCheck()).toBe(true);
   }, 120000);
 
@@ -133,7 +136,8 @@ describe('同梱のサンプルセーブ', () => {
     const w = sim.world;
     const dams = [...w.buildings.values()].filter((b) => b.kind === 'dam');
     const intake = [...w.buildings.values()].find((b) => b.kind === 'intake');
-    expect(dams.length).toBeGreaterThan(4);
+    // 径間数は地形しだい (狭窄部なら 1 セルで谷が閉じる) なので、数では判定しない
+    expect(dams.length).toBeGreaterThan(0);
     expect(intake).toBeDefined();
     if (!intake) return;
 
@@ -153,11 +157,15 @@ describe('同梱のサンプルセーブ', () => {
     const damAcc = Math.max(...dams.map((d) => w.flowAcc[w.idx(d.x, d.y)]));
     expect(damAcc / intakeAcc).toBeGreaterThan(0.5);
 
-    // (3) 実際に水を貯めていること
+    // (3) 実際に水を貯めていること。
+    //     上流が北とは限らない (川は東西にも北へも流れる) ので、
+    //     堰のまわりを見て湛水しているかで判定する。
     const center = dams.reduce((a, b) =>
       w.flowAcc[w.idx(b.x, b.y)] > w.flowAcc[w.idx(a.x, a.y)] ? b : a,
     );
-    expect(w.water[w.idx(center.x, Math.max(0, center.y - 2))]).toBeGreaterThan(0.5);
+    let pool = 0;
+    for (const j of w.cellsInRadius(center.x, center.y, 4)) pool = Math.max(pool, w.water[j]);
+    expect(pool).toBeGreaterThan(1.5);
   }, 180000);
 
   it('実際に読み込めて、人口と給水が生きている', () => {
