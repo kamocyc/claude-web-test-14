@@ -607,7 +607,8 @@ input[type='range'] {
 /* 画質設定パネル                                                       */
 /* ------------------------------------------------------------------ */
 
-#gfx-panel {
+#gfx-panel,
+#weather-panel {
   position: absolute;
   right: 10px;
   bottom: 74px;
@@ -621,11 +622,13 @@ input[type='range'] {
   z-index: 12;
 }
 
-#gfx-panel.hidden {
+#gfx-panel.hidden,
+#weather-panel.hidden {
   display: none;
 }
 
-#gfx-panel h3 {
+#gfx-panel h3,
+#weather-panel h3 {
   margin: 0 0 10px;
   font-size: 12px;
   color: var(--muted);
@@ -684,6 +687,55 @@ input[type='range'] {
   font-size: 11px;
   line-height: 1.6;
   color: var(--muted);
+}
+
+/* 手動天気パネル */
+
+#wx-controls.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.wx-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 12px;
+}
+
+.wx-presets button {
+  flex: 1 1 30%;
+  padding: 5px 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.wx-presets button:hover {
+  background: rgba(79, 179, 232, 0.2);
+  border-color: var(--accent);
+}
+
+/* 手動天気のあいだは予報が「この天気が続く」ことを示す */
+#forecast[data-manual='1'] {
+  position: relative;
+}
+
+#forecast[data-manual='1']::after {
+  content: '手動天気';
+  position: absolute;
+  top: -7px;
+  right: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: #eaf6ff;
+  font-size: 9px;
+  letter-spacing: 0.08em;
 }
 
 @media (max-width: 900px) {

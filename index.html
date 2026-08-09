@@ -90,12 +90,14 @@
           <button data-overlay="network">水道網 (N)</button>
           <button id="btn-flow" class="active">流線 (F)</button>
           <button id="btn-grid">格子 (G)</button>
+          <button id="btn-weather" title="天気を自由に変える (暦を無視して降らせる)">天気</button>
           <button id="btn-gfx" title="描画品質・高低差の強調">画質</button>
         </div>
         <div id="forecast"></div>
       </footer>
 
-      <div id="gfx-panel" class="hidden"></div>
+      <div id="gfx-panel" class="panel hidden"></div>
+      <div id="weather-panel" class="panel hidden"></div>
 
       <div id="tooltip" class="hidden"></div>
 
@@ -133,6 +135,9 @@
           <section>
             <h3>サンプルの町</h3>
             <ul>
+              <li>下の<b>天気</b>を押すと<b>手動天気</b>に切り替えられます。日付に関係なく、好きなタイミングで
+                降水強度 (mm/h)・天気・気温を指定でき、解除するまでその天気が続きます。
+                梅雨や台風を待たずに洪水を試したり、晴れを続けて渇水を起こしたりできます。</li>
               <li>ツールバーの<b>サンプル</b>を押すと、自動プレイヤーが2年かけて育てた町
                 (上水道・田畑・堤防・ダムが揃った状態) を読み込めます。動いている町を眺めるところから始めたいときにどうぞ。</li>
               <li><b>保存</b>でブラウザに現在の状態を書き込み、<b>読込</b>で戻せます。</li>

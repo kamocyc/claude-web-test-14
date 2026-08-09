@@ -2,6 +2,7 @@ import { HYDRO, MAP } from '../config';
 import { clamp } from '../core/rng';
 import type { BuildingKind } from './buildings';
 import { Simulation } from './simulation';
+import type { WeatherSave } from './weather';
 
 export const SAVE_VERSION = 1;
 
@@ -30,13 +31,7 @@ export interface SaveData {
   createdAt: string;
   seed: number;
   mapSize: number;
-  weather: {
-    day: number;
-    hour: number;
-    quick: number;
-    slow: number;
-    dryDays: number;
-  };
+  weather: WeatherSave;
   city: {
     money: number;
     food: number;

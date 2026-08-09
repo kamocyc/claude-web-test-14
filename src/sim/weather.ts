@@ -138,6 +138,29 @@ const K_SLOW = 0.06;
 /** この流量を下回り、かつ無降雨が続くと渇水とみなす (m^3/s) */
 const DROUGHT_INFLOW = 6;
 
+/**
+ * 手動天気。設定するとその日の暦を無視して、解除するまでこの天気が降り続ける。
+ * (「梅雨まで待たずに洪水を試したい」「渇水を再現したい」ための操作モード)
+ */
+export interface ManualWeather {
+  kind: SkyKind;
+  /** 降水強度 (mm/h)。一定量が降り続ける */
+  rainRate: number;
+  /** 日平均気温 (℃)。実際の気温はここに日変化が乗る */
+  tempC: number;
+}
+
+/** セーブに載せる気象の内部状態 */
+export interface WeatherSave {
+  day: number;
+  hour: number;
+  quick: number;
+  slow: number;
+  dryDays: number;
+  /** 手動天気 (古いセーブにはこのフィールドがない) */
+  manual?: ManualWeather | null;
+}
+
 export class Weather {
   day = 0;
   hour = 6;
@@ -148,11 +171,39 @@ export class Weather {
   inflow = Q_BASE;
   tempC = 15;
   today: DayWeather;
+  /** 手動天気 (null = 日付どおりの暦の天気) */
+  manual: ManualWeather | null = null;
+  /** その日これまでに降った雨 (mm)。手動天気での連続無降雨日数の判定に使う */
+  private dayRain = 0;
   /** 過去 24 ゲーム時間の降水量 (mm) */
   private recentRain: number[] = [];
 
   constructor(private seed: number) {
     this.today = dayWeather(seed, 0);
+  }
+
+  /** 手動天気を設定する (null で暦に戻す)。時刻を進めずに即座に反映される。 */
+  setManual(m: ManualWeather | null): void {
+    this.manual = m
+      ? { kind: m.kind, rainRate: Math.max(0, m.rainRate), tempC: m.tempC }
+      : null;
+    this.today = this.currentDay();
+    this.rainRate = this.manual ? this.manual.rainRate : this.hourlyRain(this.day, this.hour);
+    const base = this.manual ? this.manual.tempC : this.today.tempC;
+    this.tempC = base + Math.sin(((this.hour - 9) / 24) * Math.PI * 2) * 4;
+  }
+
+  /** いま採用すべき「その日の天気」 */
+  private currentDay(): DayWeather {
+    if (!this.manual) return dayWeather(this.seed, this.day);
+    return {
+      day: this.day,
+      season: seasonOfDay(this.day),
+      rainMm: this.manual.rainRate * 24,
+      tempC: this.manual.tempC,
+      kind: this.manual.kind,
+      typhoon: this.manual.kind === 'storm',
+    };
   }
 
   get year(): number {
@@ -193,13 +244,18 @@ export class Weather {
     if (this.hour >= WEATHER.HOURS_PER_DAY) {
       this.hour = 0;
       this.day += 1;
-      const prev = dayWeather(this.seed, this.day - 1);
-      this.dryDays = prev.rainMm < 1 ? this.dryDays + 1 : 0;
-      this.today = dayWeather(this.seed, this.day);
+      // 手動天気のときは暦を参照できないので、実際に降った量で無降雨日数を数える
+      // (手動で晴れを続ければちゃんと渇水になる)
+      const prevRain = this.manual ? this.dayRain : dayWeather(this.seed, this.day - 1).rainMm;
+      this.dryDays = prevRain < 1 ? this.dryDays + 1 : 0;
+      this.dayRain = 0;
+      this.today = this.currentDay();
     }
 
-    this.rainRate = this.hourlyRain(this.day, this.hour);
-    this.tempC = this.today.tempC + Math.sin(((this.hour - 9) / 24) * Math.PI * 2) * 4;
+    this.rainRate = this.manual ? this.manual.rainRate : this.hourlyRain(this.day, this.hour);
+    this.dayRain += this.rainRate;
+    const baseTemp = this.manual ? this.manual.tempC : this.today.tempC;
+    this.tempC = baseTemp + Math.sin(((this.hour - 9) / 24) * Math.PI * 2) * 4;
 
     this.recentRain.push(this.rainRate);
     if (this.recentRain.length > 24) this.recentRain.shift();
@@ -216,25 +272,29 @@ export class Weather {
   }
 
   /** セーブ用の内部状態 (流域貯留は復元しないと洪水/渇水の位相がずれる) */
-  snapshotState(): { day: number; hour: number; quick: number; slow: number; dryDays: number } {
+  snapshotState(): WeatherSave {
     return {
       day: this.day,
       hour: this.hour,
       quick: this.quick,
       slow: this.slow,
       dryDays: this.dryDays,
+      manual: this.manual ? { ...this.manual } : null,
     };
   }
 
-  restoreState(s: { day: number; hour: number; quick: number; slow: number; dryDays: number }): void {
+  restoreState(s: WeatherSave): void {
     this.day = s.day;
     this.hour = s.hour;
     this.quick = s.quick;
     this.slow = s.slow;
     this.dryDays = s.dryDays;
-    this.today = dayWeather(this.seed, this.day);
-    this.rainRate = this.hourlyRain(this.day, this.hour);
-    this.tempC = this.today.tempC;
+    // manual は後から足したフィールドなので、古いセーブでは undefined になる
+    this.manual = s.manual ? { ...s.manual } : null;
+    this.dayRain = 0;
+    this.today = this.currentDay();
+    this.rainRate = this.manual ? this.manual.rainRate : this.hourlyRain(this.day, this.hour);
+    this.tempC = this.manual ? this.manual.tempC : this.today.tempC;
     this.recentRain = [];
     this.inflow =
       Q_BASE * clamp(1 - this.dryDays / 26, 0.28, 1) +
@@ -252,10 +312,19 @@ export class Weather {
     return clamp(0.25 + this.tempC / 26, 0.1, 2.2);
   }
 
-  /** これから FORECAST_DAYS 日ぶんの予報 */
+  /**
+   * これから FORECAST_DAYS 日ぶんの予報。
+   * 手動天気のときは「解除するまで同じ天気が続く」ので、それをそのまま返す。
+   */
   forecast(days = WEATHER.FORECAST_DAYS): DayWeather[] {
     const out: DayWeather[] = [];
-    for (let d = 0; d < days; d++) out.push(dayWeather(this.seed, this.day + d));
+    for (let d = 0; d < days; d++) {
+      if (this.manual) {
+        out.push({ ...this.currentDay(), day: this.day + d, season: seasonOfDay(this.day + d) });
+      } else {
+        out.push(dayWeather(this.seed, this.day + d));
+      }
+    }
     return out;
   }
 
@@ -267,7 +336,8 @@ export class Weather {
     for (let d = 0; d < days; d++) {
       const dw = dayWeather(this.seed, this.day + d);
       for (let h = 0; h < 24; h++) {
-        const r = d === 0 && h < this.hour ? 0 : this.hourlyRain(this.day + d, h);
+        const future = !(d === 0 && h < this.hour);
+        const r = !future ? 0 : this.manual ? this.manual.rainRate : this.hourlyRain(this.day + d, h);
         const cr = r * 1.35;
         quick = (quick + cr * 0.62) * Math.exp(-1 / TAU_QUICK);
         slow = (slow + cr * 0.38) * Math.exp(-1 / TAU_SLOW);

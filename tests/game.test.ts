@@ -20,6 +20,62 @@ describe('Weather', () => {
     expect(w.today.kind).toBe(forecast[3].kind);
   });
 
+  it('手動天気にすると、日付に関係なく指定した雨が降り続ける', () => {
+    const w = new Weather(2024);
+    // 暦では雨の日を選んでも、手動で快晴にしたら降らない
+    while (w.today.rainMm < 5) w.advanceHour();
+    w.setManual({ kind: 'clear', rainRate: 0, tempC: 25 });
+    expect(w.rainRate).toBe(0); // 時刻を進めなくても即座に反映される
+    expect(w.today.kind).toBe('clear');
+    for (let i = 0; i < 48; i++) {
+      w.advanceHour();
+      expect(w.rainRate).toBe(0);
+    }
+    // 逆に、暦を無視して大雨を降らせられる
+    w.setManual({ kind: 'heavy', rainRate: 20, tempC: 22 });
+    for (let i = 0; i < 24; i++) w.advanceHour();
+    expect(w.rainRate).toBe(20);
+    expect(w.rain24h()).toBeCloseTo(20 * 24, 3);
+  });
+
+  it('手動天気の予報は「解除するまで同じ天気が続く」', () => {
+    const w = new Weather(7);
+    w.setManual({ kind: 'rain', rainRate: 4, tempC: 18 });
+    const fc = w.forecast(7);
+    expect(fc).toHaveLength(7);
+    expect(new Set(fc.map((d) => d.kind)).size).toBe(1);
+    expect(fc.every((d) => d.rainMm === 4 * 24)).toBe(true);
+  });
+
+  it('手動で晴れを続ければ渇水になり、解除すれば暦の天気に戻る', () => {
+    const w = new Weather(99);
+    w.setManual({ kind: 'clear', rainRate: 0, tempC: 28 });
+    for (let d = 0; d < 30; d++) for (let h = 0; h < WEATHER.HOURS_PER_DAY; h++) w.advanceHour();
+    expect(w.dryDays).toBeGreaterThanOrEqual(WEATHER.DROUGHT_DAYS);
+    expect(w.drought).toBe(true);
+
+    w.setManual(null);
+    expect(w.manual).toBeNull();
+    expect(w.today).toEqual(dayWeather(99, w.day));
+  });
+
+  it('手動天気はセーブ/ロードで復元される', () => {
+    const w = new Weather(5);
+    w.setManual({ kind: 'storm', rainRate: 31, tempC: 24 });
+    const saved = w.snapshotState();
+
+    const other = new Weather(5);
+    other.restoreState(saved);
+    expect(other.manual).toEqual({ kind: 'storm', rainRate: 31, tempC: 24 });
+    expect(other.rainRate).toBe(31);
+
+    // 古いセーブ (manual フィールドがない) は暦の天気として読める
+    const legacy = new Weather(5);
+    legacy.setManual({ kind: 'rain', rainRate: 9, tempC: 20 });
+    legacy.restoreState({ day: saved.day, hour: saved.hour, quick: saved.quick, slow: saved.slow, dryDays: saved.dryDays });
+    expect(legacy.manual).toBeNull();
+  });
+
   it('梅雨は乾季より雨が多い', () => {
     let tsuyu = 0;
     let winter = 0;

@@ -14,7 +14,7 @@ import {
   type ToolKind,
 } from '../sim/buildings';
 import type { Simulation } from '../sim/simulation';
-import { SKY_ICON, SKY_LABEL, inflowLabel } from '../sim/weather';
+import { SKY_ICON, SKY_LABEL, inflowLabel, type ManualWeather, type SkyKind } from '../sim/weather';
 import type { GraphicsSettings, Overlay, Quality } from '../render/renderer';
 
 export interface UICallbacks {
@@ -28,7 +28,19 @@ export interface UICallbacks {
   onLoadSample(): void;
   onGraphics(next: Partial<GraphicsSettings>): void;
   graphics: GraphicsSettings;
+  /** 手動天気の設定 (null で暦どおりに戻す) */
+  onWeather(next: ManualWeather | null): void;
 }
+
+/** 手動天気パネルのプリセット */
+const WEATHER_PRESETS: { label: string; value: ManualWeather }[] = [
+  { label: '快晴', value: { kind: 'clear', rainRate: 0, tempC: 24 } },
+  { label: 'くもり', value: { kind: 'cloudy', rainRate: 0, tempC: 20 } },
+  { label: '雨', value: { kind: 'rain', rainRate: 6, tempC: 20 } },
+  { label: '大雨', value: { kind: 'heavy', rainRate: 18, tempC: 21 } },
+  { label: '台風', value: { kind: 'storm', rainRate: 34, tempC: 24 } },
+  { label: '雪', value: { kind: 'snow', rainRate: 3, tempC: -1 } },
+];
 
 interface PseudoTool {
   kind: ToolKind;
@@ -135,12 +147,125 @@ export class UI {
       'minimap',
       'chip-inflow',
       'gfx-panel',
+      'weather-panel',
     ]) {
       this.el[id] = q(id);
     }
     this.buildToolbar();
     this.buildGraphicsPanel();
+    this.buildWeatherPanel();
     this.wire();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 手動天気                                                          */
+  /* ---------------------------------------------------------------- */
+
+  /** 手動天気パネルで編集中の値 (手動を切るあいだも保持しておく) */
+  private draft: ManualWeather = { kind: 'rain', rainRate: 8, tempC: 20 };
+  private manualOn = false;
+
+  private buildWeatherPanel(): void {
+    const host = this.el['weather-panel'];
+    host.innerHTML = `
+      <h3>天気を操作</h3>
+      <label class="gfx-row check"><input type="checkbox" id="wx-manual" /><span>手動天気にする (暦を無視)</span></label>
+      <div class="wx-presets">
+        ${WEATHER_PRESETS.map((p, i) => `<button data-preset="${i}">${p.label}</button>`).join('')}
+      </div>
+      <div id="wx-controls">
+        <label class="gfx-row"><span>天気</span>
+          <select id="wx-kind">
+            ${(Object.keys(SKY_LABEL) as SkyKind[])
+              .map((k) => `<option value="${k}">${SKY_ICON[k]} ${SKY_LABEL[k]}</option>`)
+              .join('')}
+          </select>
+        </label>
+        <label class="gfx-row"><span>降水強度</span>
+          <input type="range" id="wx-rain" min="0" max="60" step="0.5" />
+          <b id="wx-rain-val">－</b>
+        </label>
+        <label class="gfx-row"><span>気温</span>
+          <input type="range" id="wx-temp" min="-8" max="40" step="1" />
+          <b id="wx-temp-val">－</b>
+        </label>
+      </div>
+      <p class="gfx-note" id="wx-now">－</p>
+    `;
+
+    const manual = document.getElementById('wx-manual') as HTMLInputElement;
+    const kind = document.getElementById('wx-kind') as HTMLSelectElement;
+    const rain = document.getElementById('wx-rain') as HTMLInputElement;
+    const temp = document.getElementById('wx-temp') as HTMLInputElement;
+
+    const push = (): void => {
+      this.draft = {
+        kind: kind.value as SkyKind,
+        rainRate: Number(rain.value),
+        tempC: Number(temp.value),
+      };
+      this.refreshWeatherInputs();
+      if (this.manualOn) this.cb.onWeather(this.draft);
+    };
+
+    manual.addEventListener('change', () => {
+      this.manualOn = manual.checked;
+      this.cb.onWeather(this.manualOn ? this.draft : null);
+      this.refreshWeatherInputs();
+    });
+    kind.addEventListener('change', push);
+    rain.addEventListener('input', push);
+    temp.addEventListener('input', push);
+
+    host.querySelectorAll<HTMLButtonElement>('.wx-presets button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this.draft = { ...WEATHER_PRESETS[Number(b.dataset.preset)].value };
+        // プリセットを押したら手動天気へ自動的に切り替える
+        this.manualOn = true;
+        manual.checked = true;
+        this.cb.onWeather(this.draft);
+        this.refreshWeatherInputs();
+      });
+    });
+    this.refreshWeatherInputs();
+  }
+
+  /** draft の値を入力欄へ書き戻し、有効/無効を切り替える */
+  private refreshWeatherInputs(): void {
+    const kind = document.getElementById('wx-kind') as HTMLSelectElement | null;
+    const rain = document.getElementById('wx-rain') as HTMLInputElement | null;
+    const temp = document.getElementById('wx-temp') as HTMLInputElement | null;
+    if (!kind || !rain || !temp) return;
+    kind.value = this.draft.kind;
+    rain.value = String(this.draft.rainRate);
+    temp.value = String(Math.round(this.draft.tempC));
+    const rl = document.getElementById('wx-rain-val');
+    const tl = document.getElementById('wx-temp-val');
+    if (rl) rl.textContent = `${this.draft.rainRate.toFixed(1)}mm/h`;
+    if (tl) tl.textContent = `${Math.round(this.draft.tempC)}℃`;
+    const box = document.getElementById('wx-controls');
+    if (box) box.classList.toggle('disabled', !this.manualOn);
+  }
+
+  /** シミュレーション側の天気をパネルに反映する (セーブ読み込み後など) */
+  private syncWeatherPanel(sim: Simulation): void {
+    const m = sim.weather.manual;
+    const on = m !== null;
+    if (on !== this.manualOn) {
+      this.manualOn = on;
+      const box = document.getElementById('wx-manual') as HTMLInputElement | null;
+      if (box) box.checked = on;
+      if (m) this.draft = { ...m };
+      this.refreshWeatherInputs();
+    }
+    const now = document.getElementById('wx-now');
+    if (now) {
+      const w = sim.weather;
+      const txt = on
+        ? `いま: ${SKY_LABEL[w.today.kind]} ${w.rainRate.toFixed(1)}mm/h ${w.tempC.toFixed(0)}℃ / 流入 ${w.inflow.toFixed(1)} m³/s (手動)`
+        : `いま: 暦どおり (${w.dateLabel()}) ${SKY_LABEL[w.today.kind]} ${w.rainRate.toFixed(1)}mm/h / 流入 ${w.inflow.toFixed(1)} m³/s`;
+      if (now.textContent !== txt) now.textContent = txt;
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -271,11 +396,18 @@ export class UI {
     document.getElementById('btn-sample')?.addEventListener('click', () => this.cb.onLoadSample());
     document.getElementById('btn-predischarge')?.addEventListener('click', () => this.cb.onPredischarge());
     document.getElementById('btn-closegates')?.addEventListener('click', () => this.cb.onCloseGates());
-    const gfxBtn = document.getElementById('btn-gfx') as HTMLButtonElement | null;
-    gfxBtn?.addEventListener('click', () => {
-      const hidden = this.el['gfx-panel'].classList.toggle('hidden');
-      gfxBtn.classList.toggle('active', !hidden);
-    });
+    const togglePanel = (btnId: string, panelId: string, otherId: string, otherBtnId: string): void => {
+      const btn = document.getElementById(btnId) as HTMLButtonElement | null;
+      btn?.addEventListener('click', () => {
+        const hidden = this.el[panelId].classList.toggle('hidden');
+        btn.classList.toggle('active', !hidden);
+        // パネルは重なる位置にあるので、片方を開いたらもう片方は閉じる
+        this.el[otherId].classList.add('hidden');
+        document.getElementById(otherBtnId)?.classList.remove('active');
+      });
+    };
+    togglePanel('btn-gfx', 'gfx-panel', 'weather-panel', 'btn-weather');
+    togglePanel('btn-weather', 'weather-panel', 'gfx-panel', 'btn-gfx');
     document.getElementById('btn-help')?.addEventListener('click', () => this.el['help'].classList.remove('hidden'));
     document.getElementById('help-close')?.addEventListener('click', () => this.el['help'].classList.add('hidden'));
     document.getElementById('insp-close')?.addEventListener('click', () => this.clearSelection());
@@ -344,7 +476,7 @@ export class UI {
     set('v-date', `${w.dateLabel()} ${w.timeLabel()}`);
     set(
       'v-weather',
-      `${SKY_ICON[w.today.kind]} ${SKY_LABEL[w.today.kind]} ${w.rainRate > 0.05 ? `${w.rainRate.toFixed(1)}mm/h` : ''} ${w.tempC.toFixed(0)}℃`,
+      `${w.manual ? '✋ ' : ''}${SKY_ICON[w.today.kind]} ${SKY_LABEL[w.today.kind]} ${w.rainRate > 0.05 ? `${w.rainRate.toFixed(1)}mm/h` : ''} ${w.tempC.toFixed(0)}℃`,
     );
     set('v-inflow', `${s.inflow.toFixed(1)} m³/s ${inflowLabel(s.inflow)}`);
     set('v-money', `￥${Math.round(s.city.money).toLocaleString('ja-JP')}`);
@@ -362,6 +494,7 @@ export class UI {
 
     this.updateEvents(sim);
     this.updateForecast(sim);
+    this.syncWeatherPanel(sim);
     if (this.selected) this.renderInspector(sim);
     else if (this.selectedCell) this.renderCellInspector(sim, this.selectedCell.x, this.selectedCell.y);
   }
@@ -384,11 +517,14 @@ export class UI {
 
   private updateForecast(sim: Simulation): void {
     const fc = sim.weather.forecast();
-    const key = fc.map((d) => `${d.day}:${d.rainMm.toFixed(0)}`).join('|');
+    const manual = sim.weather.manual !== null;
+    const key = `${manual ? 'M' : 'A'}|${fc.map((d) => `${d.day}:${d.rainMm.toFixed(0)}`).join('|')}`;
     if (key === this.forecastKey) return;
     this.forecastKey = key;
 
     const host = this.el['forecast'];
+    // 手動天気のあいだは「解除するまでこの天気が続く」ことを示す
+    host.dataset.manual = manual ? '1' : '';
     host.innerHTML = '';
     fc.forEach((d, i) => {
       const div = document.createElement('div');

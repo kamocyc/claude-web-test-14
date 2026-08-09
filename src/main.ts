@@ -91,6 +91,17 @@ function boot(): void {
       }
     },
     graphics: gfx,
+    onWeather: (next) => {
+      sim.weather.setManual(next);
+      sim.damage.info(
+        next
+          ? `天気を手動に切り替えました (${next.rainRate.toFixed(1)}mm/h)`
+          : '天気を暦どおりに戻しました',
+        sim.weather.day,
+        sim.weather.hour,
+        'info',
+      );
+    },
   });
 
   ui.setLoadingText('流域を生成しています… (侵食計算中)');
