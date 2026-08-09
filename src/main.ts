@@ -1,7 +1,7 @@
 import { SPEEDS } from './config';
 import { hashSeed } from './core/rng';
 import { Camera } from './render/camera';
-import { Renderer, type Overlay } from './render/renderer';
+import { DEFAULT_GRAPHICS, Renderer, type GraphicsSettings, type Overlay } from './render/renderer';
 import { BUILDINGS, type BuildingKind } from './sim/buildings';
 import {
   SaveError,
@@ -26,8 +26,22 @@ function readSeed(): number {
   return (Math.random() * 0xffffffff) >>> 0;
 }
 
+const GFX_KEY = 'hydropolis.graphics.v1';
+
+/** 画質設定はブラウザに覚えさせておく */
+function readGraphics(): GraphicsSettings {
+  try {
+    const raw = localStorage.getItem(GFX_KEY);
+    if (!raw) return { ...DEFAULT_GRAPHICS };
+    return { ...DEFAULT_GRAPHICS, ...(JSON.parse(raw) as Partial<GraphicsSettings>) };
+  } catch {
+    return { ...DEFAULT_GRAPHICS };
+  }
+}
+
 function boot(): void {
   const seed = readSeed();
+  const gfx = readGraphics();
   const ui = new UI({
     onSpeed: (i) => sim.setSpeed(i),
     onPredischarge: () => {
@@ -67,6 +81,16 @@ function boot(): void {
       void applySaveData(data, '保存した状態を読み込んでいます…');
     },
     onLoadSample: () => void loadSample(),
+    onGraphics: (next) => {
+      Object.assign(gfx, next);
+      renderer?.applySettings(next);
+      try {
+        localStorage.setItem(GFX_KEY, JSON.stringify(gfx));
+      } catch {
+        /* 保存できなくても描画は続けられる */
+      }
+    },
+    graphics: gfx,
   });
 
   ui.setLoadingText('流域を生成しています… (侵食計算中)');
@@ -78,13 +102,22 @@ function boot(): void {
   // 生成は重いので 1 フレーム待ってローディング画面を見せる
   setTimeout(() => {
     sim = new Simulation(seed);
-    camera = new Camera(sim.world.w, sim.world.h);
-    renderer = new Renderer(canvas, sim.world, camera);
-    renderer.resize();
+    camera = new Camera(sim.world);
+    try {
+      renderer = new Renderer(canvas, sim.world, camera, gfx, seed);
+    } catch (e) {
+      ui.showLoading(
+        'WebGL2 を初期化できませんでした。ハードウェアアクセラレーションを有効にしたブラウザで開いてください。',
+      );
+      console.error(e);
+      return;
+    }
 
     // 河口付近 (南) の平野を初期表示にする
     camera.centerOn(sim.world.w * 0.5, sim.world.h * 0.68);
-    camera.zoom = 5.5;
+    camera.distance = 620;
+    camera.pitch = 0.62;
+    camera.update();
 
     setupInput();
     exposeDebugHandles();
@@ -99,7 +132,7 @@ function boot(): void {
   /** 開発時のデバッグ用フック (コンソールから世界の状態を覗ける) */
   function exposeDebugHandles(): void {
     if (!import.meta.env.DEV) return;
-    Object.assign(window, { __game: sim, __camera: camera, __ui: ui });
+    Object.assign(window, { __game: sim, __camera: camera, __ui: ui, __renderer: renderer });
   }
 
   /** ローディング画面を実際に描画させてから重い処理に入る */
@@ -122,7 +155,8 @@ function boot(): void {
         ui.setLoadingText('流域を生成しています… (侵食計算中)');
         await nextPaint();
         sim = loadSave(data);
-        renderer = new Renderer(canvas, sim.world, camera);
+        camera.setWorld(sim.world);
+        renderer.setWorld(sim.world, data.seed);
         renderer.resize();
         camera.centerOn(sim.world.w * 0.5, sim.world.h * 0.6);
       }
@@ -158,6 +192,7 @@ function boot(): void {
   /* ---------------------------------------------------------------- */
 
   let panning = false;
+  let orbiting = false;
   let painting = false;
   let lastPaint = -1;
   let lastPointer = { x: 0, y: 0 };
@@ -206,11 +241,20 @@ function boot(): void {
       canvas.setPointerCapture(e.pointerId);
       lastPointer = { x: e.clientX, y: e.clientY };
       dragMoved = 0;
-      if (e.button === 2 || e.button === 1) {
+      // 中ドラッグ / Shift+右ドラッグ で視点を回す
+      if (e.button === 1 || (e.button === 2 && e.shiftKey)) {
+        orbiting = true;
+        return;
+      }
+      if (e.button === 2) {
         panning = true;
         return;
       }
       if (e.button !== 0) return;
+      if (e.shiftKey) {
+        orbiting = true;
+        return;
+      }
       const c = camera.pick(e.offsetX, e.offsetY);
       if (ui.tool === 'inspect') {
         panning = true;
@@ -227,6 +271,11 @@ function boot(): void {
       lastPointer = { x: e.clientX, y: e.clientY };
       dragMoved += Math.abs(dx) + Math.abs(dy);
 
+      if (orbiting) {
+        camera.orbit(dx, dy);
+        ui.hideTooltip();
+        return;
+      }
       if (panning) {
         camera.pan(dx, dy);
         ui.hideTooltip();
@@ -250,12 +299,14 @@ function boot(): void {
         ui.select(b ?? null, b ? null : c);
       }
       panning = false;
+      orbiting = false;
       painting = false;
       lastPaint = -1;
     };
     canvas.addEventListener('pointerup', endPointer);
     canvas.addEventListener('pointercancel', () => {
       panning = false;
+      orbiting = false;
       painting = false;
     });
     canvas.addEventListener('pointerleave', () => {
@@ -267,7 +318,7 @@ function boot(): void {
       'wheel',
       (e) => {
         e.preventDefault();
-        camera.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.16 : 1 / 1.16);
+        camera.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.14 : 1 / 1.14);
       },
       { passive: false },
     );
@@ -321,6 +372,25 @@ function boot(): void {
           ui.showGrid = !ui.showGrid;
           document.getElementById('btn-grid')?.classList.toggle('active', ui.showGrid);
           break;
+        case 'ArrowLeft':
+          camera.rotateBy(-0.09, 0);
+          break;
+        case 'ArrowRight':
+          camera.rotateBy(0.09, 0);
+          break;
+        case 'ArrowUp':
+          camera.rotateBy(0, 0.05);
+          break;
+        case 'ArrowDown':
+          camera.rotateBy(0, -0.05);
+          break;
+        case 'r':
+        case 'R':
+          camera.yaw = -0.62;
+          camera.pitch = 0.62;
+          camera.distance = 620;
+          camera.update();
+          break;
         case 'Escape':
           ui.setTool('inspect');
           ui.clearSelection();
@@ -352,7 +422,6 @@ function boot(): void {
       overlay,
       showFlow: ui.showFlow,
       showGrid: ui.showGrid,
-      hover: hoverCell,
       cursor: buildCursor(),
       selected: ui.selected,
       time: now / 1000,

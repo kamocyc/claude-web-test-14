@@ -93,6 +93,11 @@ export class Simulation {
     return this.speed === 0;
   }
 
+  /** 小数を含むゲーム内時刻 (0..24)。描画の日照を滑らかに動かすために使う。 */
+  get clockHour(): number {
+    return this.weather.hour + clamp(this.hourAcc, 0, 1);
+  }
+
   setSpeed(index: number): void {
     this.speedIndex = clamp(index, 0, SPEEDS.length - 1) | 0;
   }

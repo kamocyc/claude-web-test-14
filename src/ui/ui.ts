@@ -15,7 +15,7 @@ import {
 } from '../sim/buildings';
 import type { Simulation } from '../sim/simulation';
 import { SKY_ICON, SKY_LABEL, inflowLabel } from '../sim/weather';
-import type { Overlay } from '../render/renderer';
+import type { GraphicsSettings, Overlay, Quality } from '../render/renderer';
 
 export interface UICallbacks {
   onSpeed(index: number): void;
@@ -26,6 +26,8 @@ export interface UICallbacks {
   onSave(): void;
   onLoad(): void;
   onLoadSample(): void;
+  onGraphics(next: Partial<GraphicsSettings>): void;
+  graphics: GraphicsSettings;
 }
 
 interface PseudoTool {
@@ -132,11 +134,62 @@ export class UI {
       'loading',
       'minimap',
       'chip-inflow',
+      'gfx-panel',
     ]) {
       this.el[id] = q(id);
     }
     this.buildToolbar();
+    this.buildGraphicsPanel();
     this.wire();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 画質設定                                                          */
+  /* ---------------------------------------------------------------- */
+
+  private buildGraphicsPanel(): void {
+    const g = this.cb.graphics;
+    const host = this.el['gfx-panel'];
+    host.innerHTML = `
+      <h3>画質・表示</h3>
+      <label class="gfx-row"><span>描画品質</span>
+        <select id="gfx-quality">
+          <option value="low">低 (軽い)</option>
+          <option value="medium">中</option>
+          <option value="high">高 (きれい)</option>
+        </select>
+      </label>
+      <label class="gfx-row"><span>高低差の強調</span>
+        <input type="range" id="gfx-vscale" min="100" max="300" step="5" value="${Math.round(g.vscale * 100)}" />
+        <b id="gfx-vscale-val">${g.vscale.toFixed(2)}×</b>
+      </label>
+      <label class="gfx-row check"><input type="checkbox" id="gfx-shadows" ${g.shadows ? 'checked' : ''} /><span>影を落とす</span></label>
+      <label class="gfx-row check"><input type="checkbox" id="gfx-trees" ${g.trees ? 'checked' : ''} /><span>樹木・露岩</span></label>
+      <label class="gfx-row check"><input type="checkbox" id="gfx-daynight" ${g.dayNight ? 'checked' : ''} /><span>時刻で日照を変える</span></label>
+      <label class="gfx-row check"><input type="checkbox" id="gfx-contour" ${g.contour ? 'checked' : ''} /><span>等高線 (10m)</span></label>
+      <p class="gfx-note">中ドラッグ / Shift+ドラッグ で視点を回転、ホイールでズーム、右ドラッグで移動。R で視点リセット。</p>
+    `;
+
+    const quality = document.getElementById('gfx-quality') as HTMLSelectElement;
+    quality.value = g.quality;
+    quality.addEventListener('change', () => this.cb.onGraphics({ quality: quality.value as Quality }));
+
+    const vscale = document.getElementById('gfx-vscale') as HTMLInputElement;
+    const vlabel = document.getElementById('gfx-vscale-val') as HTMLElement;
+    vscale.addEventListener('input', () => {
+      const v = Number(vscale.value) / 100;
+      vlabel.textContent = `${v.toFixed(2)}×`;
+      this.cb.onGraphics({ vscale: v });
+    });
+
+    const bind = (id: string, key: keyof GraphicsSettings): void => {
+      const el = document.getElementById(id) as HTMLInputElement;
+      el.addEventListener('change', () => this.cb.onGraphics({ [key]: el.checked } as Partial<GraphicsSettings>));
+    };
+    bind('gfx-shadows', 'shadows');
+    bind('gfx-trees', 'trees');
+    bind('gfx-daynight', 'dayNight');
+    bind('gfx-contour', 'contour');
   }
 
   /* ---------------------------------------------------------------- */
@@ -217,6 +270,11 @@ export class UI {
     document.getElementById('btn-sample')?.addEventListener('click', () => this.cb.onLoadSample());
     document.getElementById('btn-predischarge')?.addEventListener('click', () => this.cb.onPredischarge());
     document.getElementById('btn-closegates')?.addEventListener('click', () => this.cb.onCloseGates());
+    const gfxBtn = document.getElementById('btn-gfx') as HTMLButtonElement | null;
+    gfxBtn?.addEventListener('click', () => {
+      const hidden = this.el['gfx-panel'].classList.toggle('hidden');
+      gfxBtn.classList.toggle('active', !hidden);
+    });
     document.getElementById('btn-help')?.addEventListener('click', () => this.el['help'].classList.remove('hidden'));
     document.getElementById('help-close')?.addEventListener('click', () => this.el['help'].classList.add('hidden'));
     document.getElementById('insp-close')?.addEventListener('click', () => this.clearSelection());

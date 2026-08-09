@@ -90,9 +90,12 @@
           <button data-overlay="network">水道網 (N)</button>
           <button id="btn-flow" class="active">流線 (F)</button>
           <button id="btn-grid">格子 (G)</button>
+          <button id="btn-gfx" title="描画品質・高低差の強調">画質</button>
         </div>
         <div id="forecast"></div>
       </footer>
+
+      <div id="gfx-panel" class="hidden"></div>
 
       <div id="tooltip" class="hidden"></div>
 
@@ -115,11 +118,15 @@
             </ul>
           </section>
           <section>
-            <h3>操作</h3>
+            <h3>操作 (3D ビュー)</h3>
             <ul>
-              <li>左ドラッグ: 選択中のツールを適用 / 右ドラッグ・中ドラッグ: 地図を移動</li>
-              <li>ホイール: ズーム / Space: 一時停止 / 1・2・3: 速度</li>
+              <li>左ドラッグ: 選択中のツールを適用 / 右ドラッグ: 地図を移動</li>
+              <li><b>中ドラッグ・Shift+ドラッグ: 視点を回す</b> (方位と俯角)、矢印キーでも回せます</li>
+              <li>ホイール: ズーム (カーソルの地点へ寄ります) / R: 視点リセット</li>
+              <li>Space: 一時停止 / 1・2・3・4: 速度</li>
               <li>Q: 調査モード、M/H/E/N: 表示切替、F: 流線、G: 格子</li>
+              <li>右下の<b>画質</b>から、描画品質・高低差の強調・影・樹木・時刻連動の日照を切り替えられます。
+                動作が重いときは品質を「低」にしてください。</li>
             </ul>
           </section>
           <section>
