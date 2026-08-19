@@ -28,6 +28,8 @@ export class Camera {
   private ray = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
   private tmp = new THREE.Vector3();
+  /** 注視点の高さの目標値 (target.y はここへ滑らかに寄っていく) */
+  private targetY = 0;
 
   constructor(private world: World) {
     this.centerOn(MAP * 0.5, MAP * 0.62);
@@ -41,7 +43,8 @@ export class Camera {
 
   setVScale(v: number): void {
     this.vscale = v;
-    this.target.y = this.groundAt(this.target.x, this.target.z);
+    this.clampTarget();
+    this.snapY();
     this.update();
   }
 
@@ -50,6 +53,29 @@ export class Camera {
     this.viewH = h;
     this.camera.aspect = w / Math.max(1, h);
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * 注視点を乗せるための「なだらかな地面の高さ」。
+   *
+   * 生の標高をそのまま使うと、横移動のたびに小さな谷や畝を1つ越えるだけで
+   * 注視点が上下し、画面ががくがく揺れる。カメラの高さは地形の細部ではなく
+   * 大まかな起伏に乗ってほしいので、引いているときほど広い範囲を平均する。
+   */
+  groundSmooth(wx: number, wz: number): number {
+    const r = clamp(this.distance * 0.22, CELL * 0.5, CELL * 20);
+    const inner = r * 0.55;
+    let sum = this.groundAt(wx, wz) * 0.2;
+    // 内側 4 点 (合計 0.5) と外側 8 点 (合計 0.3)
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2 + Math.PI * 0.25;
+      sum += this.groundAt(wx + Math.cos(a) * inner, wz + Math.sin(a) * inner) * (0.5 / 4);
+    }
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      sum += this.groundAt(wx + Math.cos(a) * r, wz + Math.sin(a) * r) * (0.3 / 8);
+    }
+    return sum;
   }
 
   /** 地面の高さ (ワールド m, 高さ強調込み) */
@@ -136,6 +162,8 @@ export class Camera {
   /** キーボード用のズーム (factor > 1 で寄る) */
   zoomBy(factor: number): void {
     this.distance = clamp(this.distance / factor, this.minDistance, this.maxDistance);
+    // 平均する範囲が距離に応じて変わるので、目標の高さを取り直す
+    this.clampTarget();
     this.update();
   }
 
@@ -156,9 +184,9 @@ export class Camera {
       const k = 1 - applied;
       this.target.x += (before.x - this.target.x) * k;
       this.target.z += (before.z - this.target.z) * k;
-      this.clampTarget();
     }
-    this.target.y = this.groundAt(this.target.x, this.target.z);
+    // ズームで平均する範囲 (= 目標の高さ) も変わるので、必ず取り直す
+    this.clampTarget();
     this.update();
   }
 
@@ -166,13 +194,32 @@ export class Camera {
     const span = MAP * CELL;
     this.target.x = clamp(this.target.x, -span * 0.1, span * 1.1);
     this.target.z = clamp(this.target.z, -span * 0.1, span * 1.1);
-    this.target.y = this.groundAt(this.target.x, this.target.z);
+    // 高さは目標だけ決めておき、実際の追従は tick() で滑らかに行う
+    this.targetY = this.groundSmooth(this.target.x, this.target.z);
+  }
+
+  /** 注視点の高さをその場で合わせる (世界の入れ替えなど、繋げたくないとき) */
+  private snapY(): void {
+    this.target.y = this.targetY;
+  }
+
+  /**
+   * 毎フレーム呼ぶ: 注視点の高さを目標へ滑らかに寄せる。
+   * 横移動で地形をまたぐときの上下動が、一拍おいて追いつく形になる。
+   */
+  tick(dt: number): void {
+    const dy = this.targetY - this.target.y;
+    if (Math.abs(dy) < 0.005) return;
+    // 時定数 0.16 秒の指数追従 (フレームレートに依存しない)
+    this.target.y += dy * (1 - Math.exp(-Math.min(dt, 0.2) / 0.16));
+    this.update();
   }
 
   centerOn(cellX: number, cellY: number): void {
     this.target.x = (cellX + 0.5) * CELL;
     this.target.z = (cellY + 0.5) * CELL;
     this.clampTarget();
+    this.snapY();
     this.update();
   }
 

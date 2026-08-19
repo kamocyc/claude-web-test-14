@@ -674,6 +674,54 @@ input[type='range'] {
   letter-spacing: 0.08em;
 }
 
+/* パネル内の 2 つめ以降の見出し */
+.panel h3.sub {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.seed-row {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.seed-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seed-row button,
+.panel button.wide {
+  padding: 5px 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.panel button.wide {
+  width: 100%;
+}
+
+.seed-row button:hover,
+.panel button.wide:hover {
+  background: rgba(79, 179, 232, 0.2);
+  border-color: var(--accent);
+}
+
 .gfx-row {
   display: flex;
   align-items: center;

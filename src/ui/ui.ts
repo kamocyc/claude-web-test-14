@@ -32,6 +32,8 @@ export interface UICallbacks {
   onWeather(next: ManualWeather | null): void;
   /** 資金無制限モードの切り替え */
   onUnlimited(on: boolean): void;
+  /** 流域を作り直す (null ならランダムなシード) */
+  onRegenerate(seed: string | null): void;
   /** 選択中の施設を撤去する */
   onBulldoze(b: Building): void;
 }
@@ -186,12 +188,37 @@ export class UI {
       <p class="gfx-note">建設費・維持費で資金が減らなくなり、好きなだけ建てられます。
         水の流れ方は変わらないので、治水そのものは通常どおりです。
         セーブにも記録され、解除すればそのときの残高から再開します。</p>
+      <h3 class="sub">流域のシード</h3>
+      <div class="seed-row">
+        <input type="text" id="seed-input" spellcheck="false" autocomplete="off" title="いまの流域のシード" />
+        <button id="seed-go">作る</button>
+      </div>
+      <button class="wide" id="seed-random">ランダムな流域を作る</button>
+      <p class="gfx-note">同じシードなら必ず同じ地形になります。数字でも文字でも構いません (例: hydro-demo)。
+        作り直すと<b>いまの町は失われます</b> (先に保存を)。シードは URL にも記録されるので、
+        リロードすれば同じ流域に戻れます。</p>
     `;
     const box = document.getElementById('rule-money') as HTMLInputElement;
     box.addEventListener('change', () => {
       this.unlimitedMoney = box.checked;
       this.cb.onUnlimited(box.checked);
     });
+
+    const seed = document.getElementById('seed-input') as HTMLInputElement;
+    const go = (): void => this.cb.onRegenerate(seed.value);
+    document.getElementById('seed-go')?.addEventListener('click', go);
+    seed.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') go();
+    });
+    // 入力欄をクリックしたら全選択 (いまのシードをコピーしやすくする)
+    seed.addEventListener('focus', () => seed.select());
+    document.getElementById('seed-random')?.addEventListener('click', () => this.cb.onRegenerate(null));
+  }
+
+  /** いま表示している流域のシードを入力欄に反映する */
+  setSeed(seed: number): void {
+    const input = document.getElementById('seed-input') as HTMLInputElement | null;
+    if (input) input.value = String(seed);
   }
 
   /** シミュレーション側の設定をパネルに反映する (セーブ読み込み後など) */
