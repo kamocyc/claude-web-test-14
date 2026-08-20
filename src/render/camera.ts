@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CELL, MAP } from '../config';
+import { CELL, MAP, VOXEL, voxelH } from '../config';
 import { clamp } from '../core/rng';
 import type { World } from '../world/world';
 
@@ -94,6 +94,23 @@ export class Camera {
     const h11 = w.height[i + w.w + 1];
     const h = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
     return h * this.vscale;
+  }
+
+  /**
+   * ピック (画面 → セル) 用の地面。
+   *
+   * ボクセル表示では、見えているブロックに当てないとカーソルが1セルずれる
+   * ので、双一次補間ではなく**最近傍セルの丸めた高さ**を返す。
+   *
+   * 注視点の高さには使わないこと。`groundAt` を段差にすると、横移動のたびに
+   * 注視点が段を上下して画面が揺れる (tests/camera.test.ts が押さえている)。
+   */
+  private pickGroundAt(wx: number, wz: number): number {
+    if (!VOXEL.enabled) return this.groundAt(wx, wz);
+    const w = this.world;
+    const cx = clamp(Math.floor(wx / CELL), 0, w.w - 1);
+    const cz = clamp(Math.floor(wz / CELL), 0, w.h - 1);
+    return voxelH(w.height[cz * w.w + cx]) * this.vscale;
   }
 
   update(): void {
@@ -241,7 +258,7 @@ export class Camera {
     }
     const far = this.camera.far;
     let prevT = t;
-    let prevDiff = o.y + d.y * t - this.groundAt(o.x + d.x * t, o.z + d.z * t);
+    let prevDiff = o.y + d.y * t - this.pickGroundAt(o.x + d.x * t, o.z + d.z * t);
     const stepBase = CELL * 0.45;
     let guard = 0;
     while (t < far && guard++ < 4000) {
@@ -252,14 +269,14 @@ export class Camera {
       const py = o.y + d.y * t;
       const pz = o.z + d.z * t;
       if (py < minY) break;
-      const diff = py - this.groundAt(px, pz);
+      const diff = py - this.pickGroundAt(px, pz);
       if (diff <= 0 && prevDiff > 0) {
         // 交差した区間を二分探索
         let lo = prevT;
         let hi = t;
         for (let k = 0; k < 20; k++) {
           const mid = (lo + hi) * 0.5;
-          const my = o.y + d.y * mid - this.groundAt(o.x + d.x * mid, o.z + d.z * mid);
+          const my = o.y + d.y * mid - this.pickGroundAt(o.x + d.x * mid, o.z + d.z * mid);
           if (my > 0) lo = mid;
           else hi = mid;
         }

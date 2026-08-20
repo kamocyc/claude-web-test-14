@@ -33,6 +33,52 @@ vec4 sampleV(sampler2D tex, vec2 cell) {
 `;
 
 /**
+ * ボクセル表示。
+ *
+ * `voxelH` は CPU 側 `voxelH()` (src/config.ts) と完全に同じ値を返す。
+ * `Math.round(x)` = `floor(x + 0.5)` なので、負の標高でもずれない。
+ */
+export const VOXEL_GLSL = /* glsl */ `
+uniform float uVoxel;    // ブロック1個の高さ (m)。0 = ボクセル表示オフ
+uniform float uBlockXZ;  // 目地の間隔 (m)。立方体に見えるよう uVScale に連動する
+uniform float uVoxelFloor;
+
+float voxelH(float h) {
+  return uVoxel > 0.0 ? floor(h / uVoxel + 0.5) * uVoxel : h;
+}
+`;
+
+/**
+ * 目地を描くための断片。**フラグメントシェーダ専用** —
+ * `fwidth` は頂点シェーダでは使えないので、VOXEL_GLSL とは分けてある。
+ */
+export const VOXEL_FRAG_GLSL = /* glsl */ `
+/** ブロックごとの色ムラ用の擬似乱数 */
+float voxelHash(vec2 p) {
+  return fract(sin(dot(floor(p), vec2(127.1, 311.7))) * 43758.5453);
+}
+
+/**
+ * 目地の線。p が目地の格子の上にあるほど 1 に近い値を返す。
+ *
+ * 線幅はブロックの一定割合 (5.5%) を下限にしつつ、近づくと fwidth で
+ * アンチエイリアスが効くようにしてある。fwidth だけで決めると、寄ったときに
+ * 線が 1px まで細って「ブロックの積み重ね」に見えなくなる。
+ */
+float voxelSeam(float p, float pitch) {
+  float f = abs(fract(p / pitch + 0.5) - 0.5) * pitch;
+  float w = max(fwidth(p) * 1.1, pitch * 0.055);
+  return 1.0 - smoothstep(0.0, w, f);
+}
+
+/** ブロックの中心からの距離 0 (中心) .. 1 (縁)。面取りの陰に使う */
+float voxelBevel(vec2 p, float pitch) {
+  vec2 f = abs(fract(p / pitch) - 0.5) * 2.0;
+  return max(f.x, f.y);
+}
+`;
+
+/**
  * 空の色。天球メッシュと水面の反射で同じ関数を使うので、
  * 水に映る空と実際の空がずれない。
  */

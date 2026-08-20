@@ -365,10 +365,11 @@ export class UI {
         <input type="range" id="gfx-vscale" min="100" max="300" step="5" value="${Math.round(g.vscale * 100)}" />
         <b id="gfx-vscale-val">${g.vscale.toFixed(2)}×</b>
       </label>
+      <label class="gfx-row check"><input type="checkbox" id="gfx-voxel" ${g.voxel ? 'checked' : ''} /><span>ブロック表示 (3m)</span></label>
       <label class="gfx-row check"><input type="checkbox" id="gfx-shadows" ${g.shadows ? 'checked' : ''} /><span>影を落とす</span></label>
       <label class="gfx-row check"><input type="checkbox" id="gfx-trees" ${g.trees ? 'checked' : ''} /><span>樹木・露岩</span></label>
       <label class="gfx-row check"><input type="checkbox" id="gfx-daynight" ${g.dayNight ? 'checked' : ''} /><span>時刻で日照を変える</span></label>
-      <label class="gfx-row check"><input type="checkbox" id="gfx-contour" ${g.contour ? 'checked' : ''} /><span>等高線 (10m)</span></label>
+      <label class="gfx-row check"><input type="checkbox" id="gfx-contour" ${g.contour ? 'checked' : ''} /><span id="gfx-contour-label">${g.voxel ? '段の目盛り (4段ごと)' : '等高線 (10m)'}</span></label>
       <p class="gfx-note">移動: 右ドラッグ / W A S D / 矢印キー。回転: 中ドラッグ / Shift+ドラッグ / Shift+方向キー。
         ズーム: ホイール / PageUp・PageDown。R で視点リセット。</p>
     `;
@@ -389,6 +390,7 @@ export class UI {
       const el = document.getElementById(id) as HTMLInputElement;
       el.addEventListener('change', () => this.cb.onGraphics({ [key]: el.checked } as Partial<GraphicsSettings>));
     };
+    bind('gfx-voxel', 'voxel');
     bind('gfx-shadows', 'shadows');
     bind('gfx-trees', 'trees');
     bind('gfx-daynight', 'dayNight');

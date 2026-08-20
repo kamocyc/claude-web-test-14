@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { mergeParts } from './geo';
-import { CELL } from '../../config';
+import { CELL, VOXEL, voxelH } from '../../config';
 import { RNG, clamp, hash01 } from '../../core/rng';
 import type { World } from '../../world/world';
 
@@ -68,6 +68,7 @@ export class PropLayer {
   private col = new THREE.Color();
   private version = -1;
   private vscale = 1;
+  private voxel = VOXEL.enabled;
   private materials: THREE.Material[] = [];
 
   constructor(
@@ -183,9 +184,12 @@ export class PropLayer {
 
   /** 地形か建造物が変わったときだけ並べ直す (木の高さは実寸のまま、位置だけ強調地形に載せる) */
   update(force = false, vscale = 1): void {
-    if (!force && this.version === this.world.terrainVersion && this.vscale === vscale) return;
+    if (!force && this.version === this.world.terrainVersion && this.vscale === vscale && this.voxel === VOXEL.enabled) {
+      return;
+    }
     this.version = this.world.terrainVersion;
     this.vscale = vscale;
+    this.voxel = VOXEL.enabled;
     const w = this.world;
 
     let nc = 0;
@@ -193,7 +197,9 @@ export class PropLayer {
     for (const t of this.trees) {
       const i = t.cy * w.w + t.cx;
       if (w.structure[i] >= 0) continue;
-      const h = this.heightAt(t.x, t.z);
+      // ボクセル表示では、双一次補間ではなく所属セルの丸めた高さに載せる
+      // (そうしないと木がブロックの角に刺さって浮く)
+      const h = VOXEL.enabled ? voxelH(w.height[i]) : this.heightAt(t.x, t.z);
       if (h < 1.0) continue;
       if (w.water[i] > 0.12) continue; // 水没した森は消える
       this.p.set(t.x, h * vscale - 0.3, t.z);
@@ -215,7 +221,7 @@ export class PropLayer {
     for (const s of this.stones) {
       const i = s.cy * w.w + s.cx;
       if (w.structure[i] >= 0) continue;
-      const h = this.heightAt(s.x, s.z);
+      const h = VOXEL.enabled ? voxelH(w.height[i]) : this.heightAt(s.x, s.z);
       this.p.set(s.x, h * vscale - 0.25, s.z);
       this.q.setFromAxisAngle(UP, s.rot);
       this.s.set(s.scale, s.scale * 0.8, s.scale);

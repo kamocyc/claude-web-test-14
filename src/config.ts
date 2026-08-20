@@ -136,3 +136,71 @@ export const SPEEDS = [0, 1, 3, 8] as const;
 
 /** 実時間1秒あたりに進むゲーム時間 (h) — 速度1倍のとき */
 export const HOURS_PER_REAL_SEC = 1.1;
+
+/* ------------------------------------------------------------------ */
+/* ボクセル表示 (Timberborn 方式)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 地形をブロックの積み重ねとして描くための設定。
+ *
+ * 現状 `enabled` が効くのは**描画だけ**で、シミュレーションは連続標高の
+ * まま回っている。`quantizeTerrainData` を true にすると `World.height`
+ * 自体を格子へ丸める (地形生成・灌漑・建設判定にまで影響が及ぶので、
+ * 有効化するときは README の「ボクセル表示」節の但し書きを読むこと)。
+ */
+export const VOXEL = {
+  /** 描画をボクセル化する */
+  enabled: true,
+  /** ブロック1個の高さ (m) */
+  SIZE: 3,
+  /** 地形データそのものを格子へ丸める (未実装のフェーズ2) */
+  quantizeTerrainData: false,
+};
+
+/**
+ * 標高をボクセル格子へ丸める。
+ *
+ * GLSL 側 (`VOXEL_GLSL` の `voxelH`) と**完全に同じ値**を返す必要がある。
+ * `Math.round(x)` と `floor(x + 0.5)` は負値も含めて一致するので、両者が
+ * ずれてオブジェクトがブロックから浮くことはない。
+ *
+ * 切り捨て (floor) ではなく四捨五入なのは、マップ全体が平均 SIZE/2 だけ
+ * 沈んで海岸線が動いてしまうのを避けるため。
+ */
+export function voxelH(h: number): number {
+  return VOXEL.enabled ? Math.round(h / VOXEL.SIZE) * VOXEL.SIZE : h;
+}
+
+/**
+ * 1セルの一辺に並べるブロック数。
+ *
+ * 高さは uVScale 倍して描くので、3m のブロックは既定 (1.45倍) では画面上
+ * 4.35m の高さに見える。目地を 3m 間隔で引くと立方体ではなく縦長のレンガに
+ * なってしまうので、**目地の間隔を1段の見かけの高さに合わせる**。
+ * こうすると強調率スライダをどこに動かしてもブロックが立方体に見え、かつ
+ * セルの一辺を割り切るので目地がセル境界と必ず揃う。
+ */
+export function voxelBlocksPerCell(vscale: number): number {
+  // 目地はセルの一辺を割り切る必要がある (割り切らないと目地がセル境界を
+  // またいでずれる) ので、ブロック数は整数。ただの四捨五入だと 2個 → 1個の
+  // 段でブロックが一気に横長になるため、**比で近いほう**を選ぶ。
+  const ideal = CELL / (VOXEL.SIZE * vscale);
+  const lo = Math.max(1, Math.floor(ideal));
+  const hi = lo + 1;
+  return ideal / lo <= hi / ideal ? lo : hi;
+}
+
+/**
+ * 表示上の水面標高 (m)。
+ *
+ * 地形を丸めた分だけ河床も上がるので、素の `solid + water` のままだと
+ * 丸め上がったブロックの中に水面が埋もれてしまう。GLSL 側 `cellWater()` と
+ * 同じ式で、必ずブロック上面より上に出す。
+ * 堤防・ダムによる嵩上げ (solid - height) は丸めずそのまま足す。
+ */
+export function voxelLevel(height: number, solid: number, water: number): number {
+  if (!VOXEL.enabled) return solid + water;
+  const bed = voxelH(height) + (solid - height);
+  return Math.max(solid + water, bed + (water > 0.006 ? 0.06 : 0));
+}

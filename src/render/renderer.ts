@@ -19,7 +19,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { CELL, MAP } from '../config';
+import { CELL, MAP, VOXEL, voxelBlocksPerCell } from '../config';
 import { clamp } from '../core/rng';
 import type { Building } from '../sim/buildings';
 import type { Simulation } from '../sim/simulation';
@@ -49,6 +49,8 @@ export interface GraphicsSettings {
   /** ゲーム内時刻に合わせて日照を動かす */
   dayNight: boolean;
   contour: boolean;
+  /** 地形をブロック (ボクセル) で描く */
+  voxel: boolean;
 }
 
 export const DEFAULT_GRAPHICS: GraphicsSettings = {
@@ -58,6 +60,7 @@ export const DEFAULT_GRAPHICS: GraphicsSettings = {
   trees: true,
   dayNight: true,
   contour: false,
+  voxel: true,
 };
 
 export interface RenderOptions {
@@ -134,8 +137,8 @@ export class Renderer {
     this.uniforms.uVScale.value = this.settings.vscale;
 
     const prof = PROFILES[this.settings.quality];
-    this.terrain = new TerrainMesh(this.uniforms, prof.terrain);
-    this.water = new WaterMesh(this.uniforms, prof.water);
+    this.terrain = new TerrainMesh(this.uniforms, prof.terrain, this.settings.voxel);
+    this.water = new WaterMesh(this.uniforms, prof.water, this.settings.voxel);
     this.sky = new SkyEnv(this.uniforms);
     this.buildings = new BuildingLayer();
     this.props = new PropLayer(world, seed);
@@ -160,6 +163,10 @@ export class Renderer {
     this.scene.add(sea);
     this.sea = sea;
 
+    VOXEL.enabled = this.settings.voxel;
+    this.uniforms.uVoxel.value = this.settings.voxel ? VOXEL.SIZE : 0;
+    this.uniforms.uBlockXZ.value = CELL / voxelBlocksPerCell(this.settings.vscale);
+    this.sky.sun.shadow.normalBias = this.settings.voxel ? 0.25 : 0.8;
     this.camera.setVScale(this.settings.vscale);
     this.uniforms.uContour.value = this.settings.contour ? 1 : 0;
     this.props.setVisible(this.settings.trees);
@@ -183,7 +190,7 @@ export class Renderer {
       this.terrain.setDetail(prof.terrain);
       this.scene.remove(this.water.mesh);
       this.water.dispose();
-      this.water = new WaterMesh(this.uniforms, prof.water);
+      this.water = new WaterMesh(this.uniforms, prof.water, this.settings.voxel);
       this.scene.add(this.water.mesh);
       this.sky.sun.shadow.mapSize.setScalar(prof.shadowMap);
       this.sky.sun.shadow.dispose();
@@ -197,14 +204,39 @@ export class Renderer {
     }
     if (next.vscale !== undefined) {
       this.uniforms.uVScale.value = next.vscale;
+      this.uniforms.uBlockXZ.value = CELL / voxelBlocksPerCell(next.vscale);
       this.sea.position.y = -0.35 * next.vscale;
       this.camera.setVScale(next.vscale);
       this.markers.vscale = next.vscale;
       this.props.update(true, next.vscale);
       this.markers.updateSources(0);
     }
+    if (next.voxel !== undefined && next.voxel !== prev.voxel) {
+      this.setVoxel(next.voxel);
+    }
     if (next.trees !== undefined) this.props.setVisible(next.trees);
     if (next.contour !== undefined) this.uniforms.uContour.value = next.contour ? 1 : 0;
+  }
+
+  /**
+   * なめらか表示 ⇔ ブロック表示。
+   *
+   * `VOXEL.enabled` は描画側のあちこち (木・建物・カーソル・ピック) から
+   * 参照される表示モードなので、ここが唯一の書き込み口。
+   */
+  private setVoxel(voxel: boolean): void {
+    VOXEL.enabled = voxel;
+    this.uniforms.uVoxel.value = voxel ? VOXEL.SIZE : 0;
+    this.terrain.setVoxel(voxel);
+    // 水面はジオメトリもシェーダも別物なので作り直す
+    this.scene.remove(this.water.mesh);
+    this.water.dispose();
+    this.water = new WaterMesh(this.uniforms, PROFILES[this.settings.quality].water, voxel);
+    this.scene.add(this.water.mesh);
+    // 影のにじみ (peter-panning) はブロックの平らな上面で目立つので抑える
+    this.sky.sun.shadow.normalBias = voxel ? 0.25 : 0.8;
+    this.props.update(true, this.settings.vscale);
+    this.markers.updateSources(0);
   }
 
   /**

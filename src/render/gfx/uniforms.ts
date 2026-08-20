@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CELL, MAP } from '../../config';
+import { CELL, MAP, VOXEL, voxelBlocksPerCell } from '../../config';
 import type { FieldTextures } from './fields';
 import { createTextures, type GfxTextures } from './textures';
 
@@ -12,6 +12,12 @@ export interface SharedUniforms {
   uCell: { value: number };
   /** 高さ方向の強調率 (1 = 実寸) */
   uVScale: { value: number };
+  /** ボクセル1個の高さ (m)。0 = ボクセル表示オフ */
+  uVoxel: { value: number };
+  /** ブロックの目地の間隔 (m)。立方体に見えるよう uVScale に連動する */
+  uBlockXZ: { value: number };
+  /** ジオラマの底 (m)。マップ外の境界面をここまで落として側面を作る */
+  uVoxelFloor: { value: number };
   uTime: { value: number };
 
   uHeightTex: { value: THREE.Texture };
@@ -47,6 +53,9 @@ export function createSharedUniforms(fields: FieldTextures, maxHeight: number): 
     uMapSize: { value: new THREE.Vector2(MAP, MAP) },
     uCell: { value: CELL },
     uVScale: { value: 1.45 },
+    uVoxel: { value: VOXEL.enabled ? VOXEL.SIZE : 0 },
+    uBlockXZ: { value: CELL / voxelBlocksPerCell(1.45) },
+    uVoxelFloor: { value: -24 },
     uTime: { value: 0 },
 
     uHeightTex: { value: fields.height },

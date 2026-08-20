@@ -9,8 +9,9 @@
  * ゆっくり揺れるだけ、という差が出る。
  */
 import * as THREE from 'three';
-import { CELL, MAP } from '../../config';
-import { FIELD_GLSL, SKY_GLSL } from './glsl';
+import { CELL, MAP, VOXEL } from '../../config';
+import { BLOCK_VERTEX_GLSL, buildBlockGeometry } from './blockgeo';
+import { FIELD_GLSL, SKY_GLSL, VOXEL_FRAG_GLSL, VOXEL_GLSL } from './glsl';
 import type { SharedUniforms } from './uniforms';
 
 function buildWaterGeometry(sub: number): THREE.BufferGeometry {
@@ -192,13 +193,238 @@ void main() {
 }
 `;
 
+/* ------------------------------------------------------------------ */
+/* ボクセル (段差) 表示                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Timberborn 風の「水ブロック」。地形と同じトポロジで、
+ * セルごとに平らな水面 + 水際に垂直な壁を立てる。
+ *
+ * **水深そのものは連続値のまま**で、垂直方向に量子化はしない。
+ * 量子化するのは地形だけ。0.2m の水たまりは 0.2m の高さで描かれる。
+ */
+const V_WATER_VERT = /* glsl */ `
+uniform sampler2D uWaterTex;
+uniform sampler2D uHeightTex;
+uniform float uVScale;
+varying vec2 vCell;
+varying vec3 vWPos;
+varying float vDepth;
+varying vec2 vFlow;
+varying float vIsTop;
+varying vec3 vFaceN;
+varying float vTopY;
+varying float vBotY;
+${FIELD_GLSL}
+${VOXEL_GLSL}
+${BLOCK_VERTEX_GLSL}
+
+#include <common>
+#include <fog_pars_vertex>
+
+/**
+ * セル c の「表示上の」水面 (lvl)・河床 (bed)・水深。
+ *
+ * 地形を丸めた分だけ河床も上がるので、丸め上がったブロックの中に水が
+ * 埋まって消えることがない (max で必ずブロック上面より上に置く)。
+ * 堤防・ダムによる嵩上げ (solid - height) は丸めずそのまま足す。
+ */
+void cellWater(vec2 c, out float lvl, out float bed, out float depth) {
+  if (c.x < -0.5 || c.y < -0.5 || c.x > uMapSize.x - 0.5 || c.y > uMapSize.y - 0.5) {
+    // マップ外は海。河口が海面へきれいに続く
+    lvl = 0.0;
+    bed = uVoxelFloor;
+    depth = 0.0;
+    return;
+  }
+  vec4 w = fieldTexel(uWaterTex, c);
+  depth = max(w.g, 0.0);
+  float rawSolid = w.r - depth;
+  float rawTerr = fieldTexel(uHeightTex, c).r;
+  bed = voxelH(rawTerr) + (rawSolid - rawTerr);
+  lvl = max(w.r, bed + (depth > 0.006 ? 0.06 : 0.0));
+}
+
+void main() {
+  vec2 cA = aCells.xy;
+  vec2 cB = aCells.zw;
+  float isTop = all(equal(cA, cB)) ? 1.0 : 0.0;
+
+  float lA, bA, dA, lB, bB, dB;
+  cellWater(cA, lA, bA, dA);
+  cellWater(cB, lB, bB, dB);
+
+  float top = max(lA, lB);
+  // 壁の下端。両セルの河床と「低いほうの水面」のうち最も高いところで止める:
+  //   水中どうしの境界では bot == top になって壁が潰れる (湖の中に板が立たない)
+  //   水際では自セルの河床で止まる (そこから下は地形が描く)
+  float bot = min(top, max(max(bA, bB), min(lA, lB)));
+
+  vIsTop = isTop;
+  vTopY = top;
+  vBotY = bot;
+  vCell = (lA >= lB) ? cA : cB;
+  vDepth = (lA >= lB) ? dA : dB;
+  vFlow = fieldTexel(uWaterTex, vCell).ba;
+
+  vec2 d = cB - cA;
+  float sgn = (lA >= lB) ? 1.0 : -1.0;
+  vFaceN = mix(vec3(d.x, 0.0, d.y) * sgn, vec3(0.0, 1.0, 0.0), isTop);
+
+  float y = mix(mix(top, bot, position.y), lA, isTop);
+  // 水際の Z ファイティングを避けるため、水面だけごくわずかに持ち上げる
+  vec3 p = vec3(position.x, y * uVScale + isTop * 0.02, position.z);
+  vWPos = p;
+  vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}
+`;
+
+const V_WATER_FRAG = /* glsl */ `
+uniform sampler2D uWaterTex;
+uniform sampler2D uHeightTex;
+uniform sampler2D uWaveNormal;
+uniform sampler2D uFoamTex;
+uniform sampler2D uOverlayTex;
+uniform float uOverlayAmt;
+uniform float uVScale;
+uniform float uCell;
+uniform float uTime;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform vec3 uZenith;
+uniform vec3 uHorizon;
+uniform vec3 uGroundCol;
+uniform vec3 uShallowCol;
+uniform vec3 uDeepCol;
+uniform float uAmbient;
+varying vec2 vCell;
+varying vec3 vWPos;
+varying float vDepth;
+varying vec2 vFlow;
+varying float vIsTop;
+varying vec3 vFaceN;
+varying float vTopY;
+varying float vBotY;
+
+${FIELD_GLSL}
+${VOXEL_GLSL}
+${VOXEL_FRAG_GLSL}
+${SKY_GLSL}
+
+#include <common>
+#include <fog_pars_fragment>
+
+vec3 waveNormal(vec2 p, vec2 flow, float scale, float speed, float t) {
+  vec2 uvw = p * scale - flow * speed * t;
+  return texture2D(uWaveNormal, uvw).rgb * 2.0 - 1.0;
+}
+
+/** 隣のセルの水深 (マップ外は 0) */
+float neighborDepth(vec2 c) {
+  if (c.x < -0.5 || c.y < -0.5 || c.x > uMapSize.x - 0.5 || c.y > uMapSize.y - 0.5) return 0.0;
+  return max(fieldTexel(uWaterTex, c).g, 0.0);
+}
+
+void main() {
+  if (vDepth < 0.006) discard;
+
+  float speed = length(vFlow);
+  vec2 dir = speed > 0.02 ? vFlow / speed : vec2(0.0, 1.0);
+  float agitation = clamp(speed * 0.55, 0.0, 1.6) + 0.12;
+  float elev = vWPos.y / uVScale;
+
+  vec3 N;
+  float foam;
+  if (vIsTop > 0.5) {
+    // --- 水面 ---
+    // セルごとに完全に平らなので、なめらか版の「水面の傾きから作る法線」は
+    // 段だらけになって使えない。Timberborn と同じく平らな面に波だけを乗せる。
+    vec3 w1 = waveNormal(vWPos.xz, dir, 0.055, 5.0, uTime);
+    vec3 w2 = waveNormal(vWPos.xz + vec2(37.0, 11.0), dir, 0.145, 8.5, uTime);
+    vec3 w3 = waveNormal(vWPos.xz, vec2(dir.y, -dir.x), 0.021, 1.2, uTime);
+    vec2 wave = (w1.xy * 0.55 + w2.xy * 0.35 + w3.xy * 0.45) * agitation;
+    wave *= smoothstep(0.02, 0.5, vDepth) * 0.55 + 0.12;
+    N = normalize(vec3(0.0, 1.0, 0.0) + vec3(wave.x, 0.0, wave.y));
+
+    // 泡は「乾いた隣セルに接するブロックの縁」に寄せる。
+    // vDepth はセル内で定数なので、なめらか版のように水深から出すと
+    // セルまるごとが白くなってしまう。
+    vec2 lc = clamp(vWPos.xz / uCell - vCell, 0.0, 1.0);
+    float edge = 0.0;
+    edge = max(edge, step(neighborDepth(vCell + vec2(-1.0, 0.0)), 0.02) * (1.0 - smoothstep(0.0, 0.35, lc.x)));
+    edge = max(edge, step(neighborDepth(vCell + vec2(1.0, 0.0)), 0.02) * smoothstep(0.65, 1.0, lc.x));
+    edge = max(edge, step(neighborDepth(vCell + vec2(0.0, -1.0)), 0.02) * (1.0 - smoothstep(0.0, 0.35, lc.y)));
+    edge = max(edge, step(neighborDepth(vCell + vec2(0.0, 1.0)), 0.02) * smoothstep(0.65, 1.0, lc.y));
+    float foamTexA = texture2D(uFoamTex, vWPos.xz * 0.16 - dir * uTime * 0.55).a;
+    float foamTexB = texture2D(uFoamTex, vWPos.xz * 0.07 + dir * uTime * 0.2).a;
+    float shore = edge * (1.0 - smoothstep(0.05, 0.9, vDepth)) * foamTexB;
+    float rapids = smoothstep(1.4, 3.6, speed) * (0.3 + 0.7 * foamTexA);
+    foam = clamp(max(shore * 0.85, rapids), 0.0, 1.0);
+  } else {
+    // --- 水の壁 (滝・堰の落ち口) ---
+    // 波を下向きに流すと、段差から水が落ちているように見える。
+    float run = mix(vWPos.z, vWPos.x, step(0.5, abs(vFaceN.z)));
+    vec2 fall = vec2(run, -elev) * 0.09 + vec2(0.0, uTime * 1.6);
+    vec3 wf = texture2D(uWaveNormal, fall).rgb * 2.0 - 1.0;
+    vec3 tangent = vec3(vFaceN.z, 0.0, -vFaceN.x);
+    N = normalize(normalize(vFaceN) + tangent * wf.x * 0.28 + vec3(0.0, wf.y * 0.1, 0.0));
+    // 落ち口 (壁の上端) がいちばん白い
+    float lip = 1.0 - smoothstep(0.0, max(0.4, (vTopY - vBotY) * 0.55), vTopY - elev);
+    float ft = texture2D(uFoamTex, fall * 1.6).a;
+    foam = clamp(lip * (0.35 + 0.65 * ft) + smoothstep(1.4, 3.6, speed) * 0.35, 0.0, 1.0);
+  }
+
+  vec3 V = normalize(cameraPosition - vWPos);
+  float fres = 0.02 + 0.98 * pow(clamp(1.0 - max(dot(N, V), 0.0), 0.0, 1.0), 5.0);
+
+  float viewDist = length(cameraPosition - vWPos);
+  float far = smoothstep(260.0, 1100.0, viewDist);
+  float fresMax = mix(0.78, 0.34, far);
+
+  vec3 R = reflect(-V, N);
+  R.y = abs(R.y) * 0.85 + 0.02;
+  vec3 sky = skyRadiance(normalize(R), uSunDir, uZenith, uHorizon, uGroundCol, uSunColor);
+
+  float absorb = 1.0 - exp(-vDepth * 1.1);
+  vec3 body = mix(uShallowCol, uDeepCol, absorb);
+  body *= (0.35 + 0.65 * uAmbient);
+
+  vec3 H = normalize(uSunDir + V);
+  float spec = pow(max(dot(N, H), 0.0), 380.0) * 3.0 + pow(max(dot(N, H), 0.0), 32.0) * 0.18;
+  spec *= mix(1.0, 0.22, far);
+  vec3 color = mix(body, sky, clamp(fres, 0.02, fresMax)) + uSunColor * spec * clamp(uSunDir.y * 3.0, 0.0, 1.0);
+
+  color = mix(color, vec3(0.92, 0.96, 1.0) * (0.45 + 0.55 * uAmbient), foam * 0.8);
+
+  float alpha = clamp(1.0 - exp(-vDepth * 3.4), 0.12, 0.95);
+  alpha = mix(alpha, 1.0, min(fres, fresMax) * 0.7);
+  alpha = clamp(alpha + foam * 0.45, 0.0, 1.0);
+  // 壁はうすいと段差が読めないので、少し濃いめにする
+  alpha = mix(alpha, clamp(alpha + 0.22, 0.0, 1.0), 1.0 - vIsTop);
+
+  vec4 ov = texture2D(uOverlayTex, (vCell + 0.5) / uMapSize);
+  float oa = ov.a * uOverlayAmt * 0.6;
+  color = mix(color, pow(ov.rgb, vec3(2.2)), oa);
+  alpha = max(alpha, oa);
+
+  gl_FragColor = vec4(color, alpha);
+
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}
+`;
+
 export class WaterMesh {
   readonly mesh: THREE.Mesh;
   readonly material: THREE.ShaderMaterial;
   private geometry: THREE.BufferGeometry;
 
-  constructor(uniforms: SharedUniforms, sub: number) {
-    this.geometry = buildWaterGeometry(sub);
+  constructor(uniforms: SharedUniforms, sub: number, voxel = VOXEL.enabled) {
+    this.geometry = voxel ? buildBlockGeometry() : buildWaterGeometry(sub);
     this.material = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.merge([
         THREE.UniformsLib.fog,
@@ -208,11 +434,12 @@ export class WaterMesh {
           uAmbient: { value: 1 },
         },
       ]),
-      vertexShader: VERT,
-      fragmentShader: FRAG,
+      vertexShader: voxel ? V_WATER_VERT : VERT,
+      fragmentShader: voxel ? V_WATER_FRAG : FRAG,
       transparent: true,
       depthWrite: false,
       fog: true,
+      // 地形と同じ理由 (境界面1枚を共有し、外向きが面ごとに反転する)
       side: THREE.DoubleSide,
     });
     // 共有ユニフォームは参照をそのまま持たせる (merge するとコピーされてしまう)
