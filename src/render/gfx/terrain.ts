@@ -354,10 +354,8 @@ const V_NORMAL_BODY = /* glsl */ `
 `;
 
 const V_COLOR_BODY = /* glsl */ `
-  // --- 地表の種類は「丸める前の標高」で決める ---
-  // 丸めた標高で判定すると、段差の隣り合うブロックで傾斜が 0 と 3 を往復し、
-  // 岩と草が1ブロックごとにちらつく。生の標高で見れば、なめらか版と同じ
-  // 色分けのままブロックの形だけが変わる。
+  // 地表の種類はなめらか版とまったく同じ判定 (隣接セルの標高差) で決める。
+  // 形だけがブロックになり、色分けは変わらない。
   float h = rawH(vCell);
   float hL2 = rawH(vCell + vec2(-1.0, 0.0));
   float hR2 = rawH(vCell + vec2(1.0, 0.0));
@@ -450,11 +448,11 @@ const V_COLOR_BODY = /* glsl */ `
   float ao = 1.0;
   if (vIsTop > 0.5) {
     vec2 lc = clamp(vWPos.xz / uCell - vCell, 0.0, 1.0);
-    float me = voxelH(h);
-    ao -= 0.34 * step(me + 0.5, voxelH(rawH(vCell + vec2(-1.0, 0.0)))) * (1.0 - smoothstep(0.0, 0.3, lc.x));
-    ao -= 0.34 * step(me + 0.5, voxelH(rawH(vCell + vec2(1.0, 0.0)))) * smoothstep(0.7, 1.0, lc.x);
-    ao -= 0.34 * step(me + 0.5, voxelH(rawH(vCell + vec2(0.0, -1.0)))) * (1.0 - smoothstep(0.0, 0.3, lc.y));
-    ao -= 0.34 * step(me + 0.5, voxelH(rawH(vCell + vec2(0.0, 1.0)))) * smoothstep(0.7, 1.0, lc.y);
+    // 隣が 0.5m 以上高い辺の際を暗くする
+    ao -= 0.34 * step(h + 0.5, rawH(vCell + vec2(-1.0, 0.0))) * (1.0 - smoothstep(0.0, 0.3, lc.x));
+    ao -= 0.34 * step(h + 0.5, rawH(vCell + vec2(1.0, 0.0))) * smoothstep(0.7, 1.0, lc.x);
+    ao -= 0.34 * step(h + 0.5, rawH(vCell + vec2(0.0, -1.0))) * (1.0 - smoothstep(0.0, 0.3, lc.y));
+    ao -= 0.34 * step(h + 0.5, rawH(vCell + vec2(0.0, 1.0))) * smoothstep(0.7, 1.0, lc.y);
   } else {
     // 壁の足元だけ軽く落とす。ここを効かせすぎると崖が真っ黒になり、
     // せっかくの地層も目地も見えなくなる (側面はもともと日が当たりにくい)。

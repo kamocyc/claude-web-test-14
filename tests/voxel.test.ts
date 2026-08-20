@@ -1,77 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { CELL, MAP, VOXEL, voxelBlocksPerCell, voxelH, voxelLevel } from '../src/config';
+import { CELL, MAP, VOXEL, voxelBlocksPerCell } from '../src/config';
 import { BLOCK_INDICES, BLOCK_QUADS, BLOCK_VERTS, buildBlockGeometry } from '../src/render/gfx/blockgeo';
-import { VOXEL_GLSL } from '../src/render/gfx/glsl';
 import { generateTerrain } from '../src/world/terrain';
 import { World } from '../src/world/world';
-
-describe('ボクセル格子への丸め', () => {
-  const samples = [-24, -7.5, -4.5, -1.5, -0.4, 0, 0.4, 1.4, 1.5, 3, 4.5, 6.2, 47.9, 118];
-
-  it('必ずブロック高の倍数に乗る', () => {
-    for (const h of samples) {
-      expect(voxelH(h) % VOXEL.SIZE).toBeCloseTo(0, 9);
-    }
-  });
-
-  it('ずれはブロック高の半分を超えない', () => {
-    for (const h of samples) {
-      expect(Math.abs(voxelH(h) - h)).toBeLessThanOrEqual(VOXEL.SIZE / 2 + 1e-9);
-    }
-  });
-
-  it('2度掛けても動かない (冪等)', () => {
-    for (const h of samples) {
-      expect(voxelH(voxelH(h))).toBeCloseTo(voxelH(h), 9);
-    }
-  });
-
-  it('順序を壊さない (単調)', () => {
-    const sorted = [...samples].sort((a, b) => a - b);
-    for (let i = 1; i < sorted.length; i++) {
-      expect(voxelH(sorted[i])).toBeGreaterThanOrEqual(voxelH(sorted[i - 1]));
-    }
-  });
-
-  /**
-   * CPU と GPU がずれると、建物や木がブロックから浮く/沈む。
-   * GLSL は vitest で実行できないので、シェーダが使っている式
-   * `floor(h / uVoxel + 0.5) * uVoxel` を TS で再現して突き合わせる。
-   */
-  it('GLSL 側の式と一致する (負の標高でも)', () => {
-    const glsl = (h: number): number => Math.floor(h / VOXEL.SIZE + 0.5) * VOXEL.SIZE;
-    for (let h = -30; h <= 130; h += 0.1) {
-      expect(voxelH(h)).toBeCloseTo(glsl(h), 9);
-    }
-  });
-
-  it('シェーダが実際にその式を持っている', () => {
-    expect(VOXEL_GLSL).toContain('floor(h / uVoxel + 0.5) * uVoxel');
-  });
-});
-
-describe('表示上の水面', () => {
-  it('丸め上がったブロックの中に水が埋もれない', () => {
-    // 地形 4.0m → ブロック上面 3.0m ではなく 3.0m... 4.0 は 3 に丸まる
-    // 逆に 4.6m は 6.0m へ丸め上がるので、素の solid+water では水が埋まる
-    const height = 4.6;
-    const solid = 4.6;
-    const water = 0.2;
-    expect(solid + water).toBeLessThan(voxelH(height));
-    expect(voxelLevel(height, solid, water)).toBeGreaterThan(voxelH(height));
-  });
-
-  it('堤防の嵩上げは丸めずそのまま乗る', () => {
-    const height = 6;
-    const wall = 5;
-    const level = voxelLevel(height, height + wall, 0.5);
-    expect(level).toBeCloseTo(voxelH(height) + wall + 0.5, 6);
-  });
-
-  it('乾いたセルでは表示上の地面と同じ高さになる', () => {
-    expect(voxelLevel(4.6, 4.6, 0)).toBeCloseTo(voxelH(4.6), 6);
-  });
-});
 
 describe('目地の間隔', () => {
   /**
@@ -166,44 +97,37 @@ describe('ブロックのジオメトリ', () => {
 });
 
 /**
- * 実際の地形で「水がブロックに埋もれない」ことを確かめる。
- *
- * 地形を丸め上げたセルでは、素の `solid + water` がブロック上面より下に
- * 来てしまう。実測でおよそ 2 割の水面セルがこれに当たるので、
- * `voxelLevel` の押し上げが効かないと川がごっそり消える。
+ * 水の壁の高さは頂点シェーダ (`cellWater` + `bot` の式) が決めている。
+ * **標高を丸めていない**ので、水面はシミュレーションの値そのままでよく、
+ * 「丸め上がった地面に水が埋もれる」問題は起きない。
  */
-describe('実地形での水の見え方', () => {
+describe('水の壁', () => {
   const t = generateTerrain(4242, 72, 72, 0.35);
   const world = new World(t);
-  const n = t.width * t.heightMap;
 
-  /** シェーダ (cellWater) と同じ式 */
-  const cell = (i: number) => {
-    const depth = Math.max(world.water[i], 0);
-    const bed = voxelH(world.height[i]) + (world.solid[i] - world.height[i]);
-    return { lvl: voxelLevel(world.height[i], world.solid[i], world.water[i]), bed, depth };
+  /** シェーダの cellWater と同じ */
+  const cell = (i: number) => ({
+    lvl: world.solid[i] + world.water[i],
+    bed: world.solid[i],
+    depth: Math.max(world.water[i], 0),
+  });
+
+  const wall = (i: number, j: number) => {
+    const a = cell(i);
+    const b = cell(j);
+    const top = Math.max(a.lvl, b.lvl);
+    const bot = Math.min(top, Math.max(Math.max(a.bed, b.bed), Math.min(a.lvl, b.lvl)));
+    return { height: top - bot, depth: a.lvl >= b.lvl ? a.depth : b.depth };
   };
 
-  it('素の水面標高では、丸め上がったブロックに水が埋もれるセルがある', () => {
-    let buried = 0;
-    let wet = 0;
-    for (let i = 0; i < n; i++) {
-      if (world.water[i] <= 0.006) continue;
-      wet++;
-      if (world.solid[i] + world.water[i] < voxelH(world.height[i])) buried++;
-    }
-    expect(wet).toBeGreaterThan(100);
-    expect(buried).toBeGreaterThan(0);
-  });
-
-  it('voxelLevel を通すと、水面は必ずブロック上面より上に出る', () => {
-    for (let i = 0; i < n; i++) {
-      if (world.water[i] <= 0.006) continue;
-      expect(cell(i).lvl).toBeGreaterThan(voxelH(world.height[i]));
+  it('水面の基準が地形の天面と一致する (丸めによるずれが無い)', () => {
+    for (let i = 0; i < t.width * t.heightMap; i++) {
+      expect(cell(i).bed).toBe(world.solid[i]);
+      expect(cell(i).lvl - cell(i).depth).toBeCloseTo(world.solid[i], 9);
     }
   });
 
-  it('水際に垂直な壁が立ち、水中どうしの境界では潰れる', () => {
+  it('水際には壁が立ち、水中どうしの境界では潰れる', () => {
     let walls = 0;
     let insideBody = 0;
     for (let y = 0; y < t.heightMap; y++) {
@@ -216,19 +140,30 @@ describe('実地形での水の見え方', () => {
           const nx = x + dx;
           const ny = y + dy;
           if (nx >= t.width || ny >= t.heightMap) continue;
-          const a = cell(i);
-          const b = cell(ny * t.width + nx);
-          const top = Math.max(a.lvl, b.lvl);
-          const bot = Math.min(top, Math.max(Math.max(a.bed, b.bed), Math.min(a.lvl, b.lvl)));
-          const depth = a.lvl >= b.lvl ? a.depth : b.depth;
-          if (depth < 0.006) continue;
-          if (top - bot > 1e-4) walls++;
+          const j = ny * t.width + nx;
+          const r = wall(i, j);
+          if (r.depth < 0.006) continue;
+          if (r.height > 1e-4) walls++;
           // 十分に水没した2セルのあいだには板を立てない (湖の中に壁が見えてしまう)
-          else if (a.depth > 0.2 && b.depth > 0.2) insideBody++;
+          else if (world.water[i] > 0.2 && world.water[j] > 0.2) insideBody++;
         }
       }
     }
     expect(walls).toBeGreaterThan(0);
     expect(insideBody).toBeGreaterThan(0);
+  });
+
+  it('壁が水面より上や河床より下へはみ出さない', () => {
+    for (let y = 0; y < t.heightMap - 1; y++) {
+      for (let x = 0; x < t.width - 1; x++) {
+        const i = y * t.width + x;
+        const j = i + 1;
+        const r = wall(i, j);
+        const a = cell(i);
+        const b = cell(j);
+        expect(r.height).toBeGreaterThanOrEqual(0);
+        expect(r.height).toBeLessThanOrEqual(Math.max(a.lvl, b.lvl) - Math.min(a.bed, b.bed) + 1e-9);
+      }
+    }
   });
 });

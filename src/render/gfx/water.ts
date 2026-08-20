@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { CELL, MAP, VOXEL } from '../../config';
 import { BLOCK_VERTEX_GLSL, buildBlockGeometry } from './blockgeo';
-import { FIELD_GLSL, SKY_GLSL, VOXEL_FRAG_GLSL, VOXEL_GLSL } from './glsl';
+import { FIELD_GLSL, FLOW_GLSL, SKY_GLSL, VOXEL_FRAG_GLSL, VOXEL_GLSL } from './glsl';
 import type { SharedUniforms } from './uniforms';
 
 function buildWaterGeometry(sub: number): THREE.BufferGeometry {
@@ -104,6 +104,7 @@ varying float vDepth;
 varying vec2 vFlow;
 
 ${FIELD_GLSL}
+${FLOW_GLSL}
 ${SKY_GLSL}
 
 #include <common>
@@ -125,15 +126,30 @@ void main() {
   float lU = sampleV(uWaterTex, vCell + vec2(0.0, 1.0)).r;
   vec3 surfN = normalize(vec3((lL - lR) * uVScale, 2.0 * uCell, (lD - lU) * uVScale));
 
-  float speed = length(vFlow);
-  vec2 dir = speed > 0.02 ? vFlow / speed : vec2(0.0, 1.0);
-  float agitation = clamp(speed * 0.55, 0.0, 1.6) + 0.12;
+  // --- 流れ ---
+  // 波は**実際の流速で流す**。ここを定数にすると、静水の湖でも急流でも同じ
+  // 速さで波が動いてしまい、どこがどちらへ流れているのか読み取れない。
+  vec2 dir;
+  float speed;
+  float vis;
+  flowVis(uWaterTex, vWPos.xz, uCell, dir, speed, vis);
+  // 流れに沿う座標 / 直交する座標。ここから筋も横波も作る
+  float along = dot(vWPos.xz, dir);
+  float across = dot(vWPos.xz, vec2(-dir.y, dir.x));
+  // 流れ方向へ引き伸ばした筋 (along は細かく across は粗く = 異方性)
+  float streak = texture2D(uFoamTex, vec2(along * 0.020 - uTime * vis * 0.85, across * 0.115)).a;
+  // 下流へ進む横波。「どちらへ流れているか」をいちばん強く伝える
+  float crest = sin(along * 0.42 - uTime * (0.8 + 7.0 * vis));
 
-  // --- 波 (流れに乗せて 2 枚重ねる) ---
-  vec3 w1 = waveNormal(vWPos.xz, dir, 0.055, 5.0, uTime);
-  vec3 w2 = waveNormal(vWPos.xz + vec2(37.0, 11.0), dir, 0.145, 8.5, uTime);
-  vec3 w3 = waveNormal(vWPos.xz, vec2(dir.y, -dir.x), 0.021, 1.2, uTime);
-  vec2 wave = (w1.xy * 0.55 + w2.xy * 0.35 + w3.xy * 0.45) * agitation;
+  // --- 波 ---
+  vec3 w1 = waveNormal(vWPos.xz, dir * vis, 0.055, 4.0, uTime);
+  vec3 w2 = waveNormal(vWPos.xz + vec2(37.0, 11.0), dir * vis, 0.145, 6.5, uTime);
+  // 向きを持たないゆっくりした揺れ (静水がガラス板に見えないように常に少し足す)
+  vec3 w3 = waveNormal(vWPos.xz, vec2(0.13, -0.09), 0.021, 1.0, uTime);
+  vec2 wave = (w1.xy * 0.50 + w2.xy * 0.30) * (0.25 + 1.5 * vis) + w3.xy * 0.35;
+  // 横波と筋を法線へ。ハイライトが下流へ流れるので静止画でも向きが分かる
+  wave += dir * crest * vis * 0.55;
+  wave += dir * (streak - 0.5) * vis * 0.70;
   // 浅いところは波を抑える (水たまりがぎらつかないように)
   wave *= smoothstep(0.02, 0.5, vDepth) * 0.55 + 0.12;
   vec3 N = normalize(surfN + vec3(wave.x, 0.0, wave.y));
@@ -156,6 +172,8 @@ void main() {
   // --- 透過色 (深さで吸収) ---
   float absorb = 1.0 - exp(-vDepth * 1.1);
   vec3 body = mix(uShallowCol, uDeepCol, absorb);
+  // 流れの速いところは気泡を巻き込んで明るく濁る。淵と瀬の差が付く
+  body = mix(body, mix(body, vec3(0.62, 0.74, 0.78), 0.35), vis * (0.35 + 0.5 * streak));
   body *= (0.35 + 0.65 * uAmbient);
 
   // --- 太陽のハイライト ---
@@ -169,10 +187,12 @@ void main() {
   // --- 泡 ---
   float foamTexA = texture2D(uFoamTex, vWPos.xz * 0.16 - dir * uTime * 0.55).a;
   float foamTexB = texture2D(uFoamTex, vWPos.xz * 0.07 + dir * uTime * 0.2).a;
-  // 水際 (ごく浅いところ) と早瀬だけ白くする
-  float shore = (1.0 - smoothstep(0.015, 0.12, vDepth)) * smoothstep(0.15, 0.8, speed);
-  float rapids = smoothstep(1.4, 3.6, speed);
-  float foam = clamp(shore * foamTexB * 0.5 + rapids * (0.3 + 0.7 * foamTexA), 0.0, 1.0);
+  // 水際 (ごく浅いところ)・早瀬・流れの筋を白くする。
+  // 早瀬の閾値は実測に合わせてある (以前は 1.4 m/s からで、ほぼ発火しなかった)
+  float shore = (1.0 - smoothstep(0.015, 0.12, vDepth)) * smoothstep(0.05, 0.45, speed);
+  float rapids = smoothstep(uRapids.x, uRapids.y, speed) * (0.3 + 0.7 * foamTexA);
+  float streakFoam = vis * smoothstep(0.60, 0.95, streak) * 0.5;
+  float foam = clamp(max(shore * foamTexB * 0.7, max(rapids, streakFoam)), 0.0, 1.0);
   color = mix(color, vec3(0.92, 0.96, 1.0) * (0.45 + 0.55 * uAmbient), foam * 0.8);
 
   float alpha = clamp(1.0 - exp(-vDepth * 3.4), 0.12, 0.95);
@@ -224,11 +244,10 @@ ${BLOCK_VERTEX_GLSL}
 #include <fog_pars_vertex>
 
 /**
- * セル c の「表示上の」水面 (lvl)・河床 (bed)・水深。
+ * セル c の水面 (lvl)・河床 (bed)・水深。
  *
- * 地形を丸めた分だけ河床も上がるので、丸め上がったブロックの中に水が
- * 埋まって消えることがない (max で必ずブロック上面より上に置く)。
- * 堤防・ダムによる嵩上げ (solid - height) は丸めずそのまま足す。
+ * 標高を丸めていないので、水面はシミュレーションの値そのまま。
+ * 乾いたセルでは lvl == bed == 地面なので、水際で壁が自然に潰れる。
  */
 void cellWater(vec2 c, out float lvl, out float bed, out float depth) {
   if (c.x < -0.5 || c.y < -0.5 || c.x > uMapSize.x - 0.5 || c.y > uMapSize.y - 0.5) {
@@ -240,10 +259,8 @@ void cellWater(vec2 c, out float lvl, out float bed, out float depth) {
   }
   vec4 w = fieldTexel(uWaterTex, c);
   depth = max(w.g, 0.0);
-  float rawSolid = w.r - depth;
-  float rawTerr = fieldTexel(uHeightTex, c).r;
-  bed = voxelH(rawTerr) + (rawSolid - rawTerr);
-  lvl = max(w.r, bed + (depth > 0.006 ? 0.06 : 0.0));
+  lvl = w.r;
+  bed = w.r - depth;
 }
 
 void main() {
@@ -312,6 +329,7 @@ varying float vBotY;
 ${FIELD_GLSL}
 ${VOXEL_GLSL}
 ${VOXEL_FRAG_GLSL}
+${FLOW_GLSL}
 ${SKY_GLSL}
 
 #include <common>
@@ -331,22 +349,41 @@ float neighborDepth(vec2 c) {
 void main() {
   if (vDepth < 0.006) discard;
 
-  float speed = length(vFlow);
-  vec2 dir = speed > 0.02 ? vFlow / speed : vec2(0.0, 1.0);
-  float agitation = clamp(speed * 0.55, 0.0, 1.6) + 0.12;
+  // --- 流れ ---
+  // 波は**実際の流速で流す**。ここを定数にすると、静水の湖でも急流でも同じ
+  // 速さで波が動いてしまい、どこがどちらへ流れているのか読み取れない。
+  // 流速はバイリニアで拾う。水面の高さはセルごとに平らのままでよいが、
+  // 流れの向きだけはセル境界でなめらかにつながないと筋が1セルごとに折れる。
+  vec2 dir;
+  float speed;
+  float vis;
+  flowVis(uWaterTex, vWPos.xz, uCell, dir, speed, vis);
   float elev = vWPos.y / uVScale;
+
+  // 流れに沿う座標 / 直交する座標。ここから筋も横波も作る
+  float along = dot(vWPos.xz, dir);
+  float across = dot(vWPos.xz, vec2(-dir.y, dir.x));
+  // 流れ方向へ引き伸ばした筋 (along は細かく across は粗く = 異方性)
+  float streak = texture2D(uFoamTex, vec2(along * 0.020 - uTime * vis * 0.85, across * 0.115)).a;
 
   vec3 N;
   float foam;
   if (vIsTop > 0.5) {
     // --- 水面 ---
-    // セルごとに完全に平らなので、なめらか版の「水面の傾きから作る法線」は
-    // 段だらけになって使えない。Timberborn と同じく平らな面に波だけを乗せる。
-    vec3 w1 = waveNormal(vWPos.xz, dir, 0.055, 5.0, uTime);
-    vec3 w2 = waveNormal(vWPos.xz + vec2(37.0, 11.0), dir, 0.145, 8.5, uTime);
-    vec3 w3 = waveNormal(vWPos.xz, vec2(dir.y, -dir.x), 0.021, 1.2, uTime);
-    vec2 wave = (w1.xy * 0.55 + w2.xy * 0.35 + w3.xy * 0.45) * agitation;
-    wave *= smoothstep(0.02, 0.5, vDepth) * 0.55 + 0.12;
+    // 下流へ進む横波。「どちらへ流れているか」をいちばん強く伝える
+    float crest = sin(along * 0.42 - uTime * (0.8 + 7.0 * vis));
+
+    vec3 w1 = waveNormal(vWPos.xz, dir * vis, 0.055, 4.0, uTime);
+    vec3 w2 = waveNormal(vWPos.xz + vec2(37.0, 11.0), dir * vis, 0.145, 6.5, uTime);
+    // 向きを持たないゆっくりした揺れ (静水がガラス板に見えないように常に少し足す)
+    vec3 w3 = waveNormal(vWPos.xz, vec2(0.13, -0.09), 0.021, 1.0, uTime);
+
+    vec2 wave = (w1.xy * 0.50 + w2.xy * 0.30) * (0.25 + 1.5 * vis) + w3.xy * 0.35;
+    // 横波と筋を法線へ。ハイライトが下流へ流れるので静止画でも向きが分かる
+    wave += dir * crest * vis * 0.55;
+    wave += dir * (streak - 0.5) * vis * 0.70;
+    wave *= smoothstep(0.02, 0.5, vDepth) * 0.6 + 0.15;
+    // セルごとに平らなので、なめらか版の「水面の傾きから作る法線」は使えない
     N = normalize(vec3(0.0, 1.0, 0.0) + vec3(wave.x, 0.0, wave.y));
 
     // 泡は「乾いた隣セルに接するブロックの縁」に寄せる。
@@ -358,23 +395,25 @@ void main() {
     edge = max(edge, step(neighborDepth(vCell + vec2(1.0, 0.0)), 0.02) * smoothstep(0.65, 1.0, lc.x));
     edge = max(edge, step(neighborDepth(vCell + vec2(0.0, -1.0)), 0.02) * (1.0 - smoothstep(0.0, 0.35, lc.y)));
     edge = max(edge, step(neighborDepth(vCell + vec2(0.0, 1.0)), 0.02) * smoothstep(0.65, 1.0, lc.y));
-    float foamTexA = texture2D(uFoamTex, vWPos.xz * 0.16 - dir * uTime * 0.55).a;
     float foamTexB = texture2D(uFoamTex, vWPos.xz * 0.07 + dir * uTime * 0.2).a;
     float shore = edge * (1.0 - smoothstep(0.05, 0.9, vDepth)) * foamTexB;
-    float rapids = smoothstep(1.4, 3.6, speed) * (0.3 + 0.7 * foamTexA);
-    foam = clamp(max(shore * 0.85, rapids), 0.0, 1.0);
+    // 早瀬の閾値は実測に合わせてある (以前は 1.4 m/s からで、ほぼ発火しなかった)
+    float rapids = smoothstep(uRapids.x, uRapids.y, speed) * (0.35 + 0.65 * streak);
+    // 流れの筋そのものを薄く白く出す。これで流路が一目で追える
+    float streakFoam = vis * smoothstep(0.60, 0.95, streak) * 0.5;
+    foam = clamp(max(max(shore * 0.85, rapids), streakFoam), 0.0, 1.0);
   } else {
     // --- 水の壁 (滝・堰の落ち口) ---
-    // 波を下向きに流すと、段差から水が落ちているように見える。
+    // 波を下向きにスクロールさせると、段差から水が落ちているように見える。
     float run = mix(vWPos.z, vWPos.x, step(0.5, abs(vFaceN.z)));
-    vec2 fall = vec2(run, -elev) * 0.09 + vec2(0.0, uTime * 1.6);
+    vec2 fall = vec2(run, -elev) * 0.09 + vec2(0.0, uTime * (0.9 + 1.4 * vis));
     vec3 wf = texture2D(uWaveNormal, fall).rgb * 2.0 - 1.0;
     vec3 tangent = vec3(vFaceN.z, 0.0, -vFaceN.x);
     N = normalize(normalize(vFaceN) + tangent * wf.x * 0.28 + vec3(0.0, wf.y * 0.1, 0.0));
     // 落ち口 (壁の上端) がいちばん白い
     float lip = 1.0 - smoothstep(0.0, max(0.4, (vTopY - vBotY) * 0.55), vTopY - elev);
     float ft = texture2D(uFoamTex, fall * 1.6).a;
-    foam = clamp(lip * (0.35 + 0.65 * ft) + smoothstep(1.4, 3.6, speed) * 0.35, 0.0, 1.0);
+    foam = clamp(lip * (0.35 + 0.65 * ft) + smoothstep(uRapids.x, uRapids.y, speed) * 0.35, 0.0, 1.0);
   }
 
   vec3 V = normalize(cameraPosition - vWPos);
@@ -390,6 +429,8 @@ void main() {
 
   float absorb = 1.0 - exp(-vDepth * 1.1);
   vec3 body = mix(uShallowCol, uDeepCol, absorb);
+  // 流れの速いところは気泡を巻き込んで明るく濁る。淵と瀬の差が付く
+  body = mix(body, mix(body, vec3(0.62, 0.74, 0.78), 0.35), vis * (0.35 + 0.5 * streak));
   body *= (0.35 + 0.65 * uAmbient);
 
   vec3 H = normalize(uSunDir + V);

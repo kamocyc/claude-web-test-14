@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CELL, MAP, VOXEL, voxelH } from '../config';
+import { CELL, MAP, VOXEL } from '../config';
 import { clamp } from '../core/rng';
 import type { World } from '../world/world';
 
@@ -99,8 +99,8 @@ export class Camera {
   /**
    * ピック (画面 → セル) 用の地面。
    *
-   * ボクセル表示では、見えているブロックに当てないとカーソルが1セルずれる
-   * ので、双一次補間ではなく**最近傍セルの丸めた高さ**を返す。
+   * ブロック表示では天面がセル単位で平らなので、双一次補間で当てると
+   * カーソルが見えている柱からずれる。**最近傍セルの標高**をそのまま返す。
    *
    * 注視点の高さには使わないこと。`groundAt` を段差にすると、横移動のたびに
    * 注視点が段を上下して画面が揺れる (tests/camera.test.ts が押さえている)。
@@ -110,7 +110,7 @@ export class Camera {
     const w = this.world;
     const cx = clamp(Math.floor(wx / CELL), 0, w.w - 1);
     const cz = clamp(Math.floor(wz / CELL), 0, w.h - 1);
-    return voxelH(w.height[cz * w.w + cx]) * this.vscale;
+    return w.height[cz * w.w + cx] * this.vscale;
   }
 
   update(): void {

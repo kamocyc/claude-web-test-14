@@ -4,7 +4,7 @@
  * (数十〜数千頂点なので負荷は無視できる)。
  */
 import * as THREE from 'three';
-import { CELL, VOXEL, voxelH, voxelLevel } from '../../config';
+import { CELL, VOXEL } from '../../config';
 import type { Building } from '../../sim/buildings';
 import type { World } from '../../world/world';
 
@@ -128,7 +128,7 @@ export class Markers {
     const cx = Math.min(Math.max(x, 0), w.w - 1);
     const cy = Math.min(Math.max(y, 0), w.h - 1);
     const i = cy * w.w + cx;
-    return voxelH(w.height[i]) * this.vscale;
+    return w.height[i] * this.vscale;
   }
 
   /** セル (x,y) の四隅の高さ (隣接セルの平均) */
@@ -266,7 +266,7 @@ export class Markers {
         const cx = (x + 0.5 + (vx / sp) * phase * step * 0.9) * CELL;
         const cz = (y + 0.5 + (vy / sp) * phase * step * 0.9) * CELL;
         const len = Math.min(0.9, 0.25 + sp * 0.2) * step * 0.5 * CELL;
-        const yy = voxelLevel(w.height[i], w.solid[i], w.water[i]) * this.vscale + 0.25;
+        const yy = (w.solid[i] + w.water[i]) * this.vscale + 0.25;
         const dx = (vx / sp) * len;
         const dz = (vy / sp) * len;
         this.flowPos[o] = cx - dx;
@@ -297,7 +297,7 @@ export class Markers {
     const s = new THREE.Vector3();
     w.sources.forEach((src, i) => {
       const idx = src.y * w.w + src.x;
-      const y = voxelLevel(w.height[idx], w.solid[idx], w.water[idx]) * this.vscale + 0.6;
+      const y = (w.solid[idx] + w.water[idx]) * this.vscale + 0.6;
       p.set((src.x + 0.5) * CELL, y, (src.y + 0.5) * CELL);
       const k = 1 + 0.16 * Math.sin(time * 2 + i);
       s.set(k, 1, k);

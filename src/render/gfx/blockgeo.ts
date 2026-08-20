@@ -147,11 +147,16 @@ export function buildBlockGeometry(): THREE.BufferGeometry {
 export const BLOCK_VERTEX_GLSL = /* glsl */ `
 attribute vec4 aCells;
 
-/** セルの表示上の地面高さ。マップ外はジオラマの底 */
+/**
+ * セルの地面高さ。マップ外はジオラマの底。
+ *
+ * **必ず fieldTexel (最近傍) で読む。** sampleH のバイリニアで読むと
+ * セル内が平らにならず、柱の天面が波打ってしまう。
+ */
 float edgeH(sampler2D tex, vec2 c) {
   if (c.x < -0.5 || c.y < -0.5 || c.x > uMapSize.x - 0.5 || c.y > uMapSize.y - 0.5) {
     return uVoxelFloor;
   }
-  return voxelH(fieldTexel(tex, c).r);
+  return fieldTexel(tex, c).r;
 }
 `;

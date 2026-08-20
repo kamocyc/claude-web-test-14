@@ -8,7 +8,7 @@
  * - 損傷した堤防・ダムは実際に低くなる (シミュレーション側の有効天端と一致)
  */
 import * as THREE from 'three';
-import { CELL, voxelH } from '../../config';
+import { CELL } from '../../config';
 import { clamp } from '../../core/rng';
 import { BUILDINGS, type Building, type BuildingKind } from '../../sim/buildings';
 import type { World } from '../../world/world';
@@ -155,8 +155,7 @@ export class BuildingLayer {
       for (let n = 0; n < list.length; n++) {
         const b = list[n];
         const i = world.idx(b.x, b.y);
-        // ブロック上面にぴったり載せる (ボクセル表示 OFF なら素通し)
-        const ground = voxelH(world.height[i]);
+        const ground = world.height[i];
         const yaw = this.yawFor(world, b);
 
         const wallKind = BUILDINGS[b.kind].wallHeight > 0;

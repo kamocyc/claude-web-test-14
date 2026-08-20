@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CELL, MAP, VOXEL, voxelBlocksPerCell } from '../../config';
+import { CELL, FLOW_VIS, MAP, VOXEL, voxelBlocksPerCell } from '../../config';
 import type { FieldTextures } from './fields';
 import { createTextures, type GfxTextures } from './textures';
 
@@ -18,6 +18,10 @@ export interface SharedUniforms {
   uBlockXZ: { value: number };
   /** ジオラマの底 (m)。マップ外の境界面をここまで落として側面を作る */
   uVoxelFloor: { value: number };
+  /** 流れの表現が振り切る速さ (m/s) */
+  uFlowRef: { value: number };
+  /** 早瀬の泡が出はじめる / 振り切る速さ (m/s) */
+  uRapids: { value: THREE.Vector2 };
   uTime: { value: number };
 
   uHeightTex: { value: THREE.Texture };
@@ -56,6 +60,8 @@ export function createSharedUniforms(fields: FieldTextures, maxHeight: number): 
     uVoxel: { value: VOXEL.enabled ? VOXEL.SIZE : 0 },
     uBlockXZ: { value: CELL / voxelBlocksPerCell(1.45) },
     uVoxelFloor: { value: -24 },
+    uFlowRef: { value: FLOW_VIS.REF_MIN },
+    uRapids: { value: new THREE.Vector2(FLOW_VIS.REF_MIN * FLOW_VIS.RAPIDS_MIN_RATIO, FLOW_VIS.REF_MIN * FLOW_VIS.RAPIDS_MAX_RATIO) },
     uTime: { value: 0 },
 
     uHeightTex: { value: fields.height },

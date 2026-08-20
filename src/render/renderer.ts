@@ -19,7 +19,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { CELL, MAP, VOXEL, voxelBlocksPerCell } from '../config';
+import { CELL, FLOW_VIS, MAP, VOXEL, voxelBlocksPerCell } from '../config';
 import { clamp } from '../core/rng';
 import type { Building } from '../sim/buildings';
 import type { Simulation } from '../sim/simulation';
@@ -325,6 +325,16 @@ export class Renderer {
     u.uOverlayAmt.value = opt.overlay === 'none' ? 0 : 1;
 
     this.fields.tick(opt.overlay);
+
+    // 流れの見せ方の基準速度を、そのときの最大流速へゆっくり追従させる。
+    // 固定値だと渇水期に川がまったく動いて見えない (実測で平水時の流速は
+    // ほとんどが 0.01〜0.3 m/s しかない)。
+    const ref = clamp(sim.hydro.maxSpeed, FLOW_VIS.REF_MIN, FLOW_VIS.REF_MAX);
+    u.uFlowRef.value += (ref - u.uFlowRef.value) * FLOW_VIS.REF_LERP;
+    u.uRapids.value.set(
+      u.uFlowRef.value * FLOW_VIS.RAPIDS_MIN_RATIO,
+      u.uFlowRef.value * FLOW_VIS.RAPIDS_MAX_RATIO,
+    );
 
     // 季節と天気で地表の見え方を変える
     const w = sim.weather;

@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { mergeParts } from './geo';
-import { CELL, VOXEL, voxelH } from '../../config';
+import { CELL, VOXEL } from '../../config';
 import { RNG, clamp, hash01 } from '../../core/rng';
 import type { World } from '../../world/world';
 
@@ -197,9 +197,9 @@ export class PropLayer {
     for (const t of this.trees) {
       const i = t.cy * w.w + t.cx;
       if (w.structure[i] >= 0) continue;
-      // ボクセル表示では、双一次補間ではなく所属セルの丸めた高さに載せる
-      // (そうしないと木がブロックの角に刺さって浮く)
-      const h = VOXEL.enabled ? voxelH(w.height[i]) : this.heightAt(t.x, t.z);
+      // ブロック表示では天面がセル単位で平らなので、双一次補間ではなく
+      // 所属セルの標高に載せる (そうしないと木が柱の角に刺さって浮く)
+      const h = VOXEL.enabled ? w.height[i] : this.heightAt(t.x, t.z);
       if (h < 1.0) continue;
       if (w.water[i] > 0.12) continue; // 水没した森は消える
       this.p.set(t.x, h * vscale - 0.3, t.z);
@@ -221,7 +221,7 @@ export class PropLayer {
     for (const s of this.stones) {
       const i = s.cy * w.w + s.cx;
       if (w.structure[i] >= 0) continue;
-      const h = VOXEL.enabled ? voxelH(w.height[i]) : this.heightAt(s.x, s.z);
+      const h = VOXEL.enabled ? w.height[i] : this.heightAt(s.x, s.z);
       this.p.set(s.x, h * vscale - 0.25, s.z);
       this.q.setFromAxisAngle(UP, s.rot);
       this.s.set(s.scale, s.scale * 0.8, s.scale);
